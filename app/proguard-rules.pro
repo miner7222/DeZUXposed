@@ -1,0 +1,4 @@
+-keep class io.github.jjhitel.dezux.MainHook
+-repackageclasses ""
+-allowaccessmodification
+-dontwarn java.lang.reflect.AnnotatedType
