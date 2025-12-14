@@ -35,6 +35,18 @@ class MainHook : IYukiHookXposedInit {
         loadApp("com.zui.game.service") {
             applyGameServiceHooks()
         }
+
+        loadApp("com.lenovo.levoice.caption") {
+            findClass("com.zui.translator.utils.MicrosoftApiKey").hook {
+                injectMember {
+                    method {
+                        name = "getCountryCode"
+                        emptyParam()
+                    }
+                    replaceAny { "CN" }
+                }
+            }
+        }
     }
 
     private fun PackageParam.applyGlobalHooks() {

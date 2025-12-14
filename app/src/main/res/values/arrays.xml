@@ -3,6 +3,7 @@
     <string-array name="module_scope">
         <item>android</item>
         <item>com.android.settings</item>
+        <item>com.lenovo.levoice.caption</item>
         <item>com.zui.game.service</item>
     </string-array>
 </resources>
