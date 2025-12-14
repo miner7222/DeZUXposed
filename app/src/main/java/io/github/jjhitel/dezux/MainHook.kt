@@ -36,6 +36,14 @@ class MainHook : IYukiHookXposedInit {
             applyGameServiceHooks()
         }
 
+		loadApp("com.lenovo.ota") {
+            applyOtaHooks()
+        }
+
+		loadApp("com.lenovo.tbengine") {
+            applyOtaHooks()
+        }
+
         loadApp("com.lenovo.levoice.caption") {
             findClass("com.zui.translator.utils.MicrosoftApiKey").hook {
                 injectMember {
@@ -47,6 +55,7 @@ class MainHook : IYukiHookXposedInit {
                 }
             }
         }
+
     }
 
     private fun PackageParam.applyGlobalHooks() {
@@ -230,6 +239,41 @@ class MainHook : IYukiHookXposedInit {
                     // Remove features considered as Chinese bloatware.
                     if (keys != null && (keys.contains("key_we_chat") || keys.contains("key_qq"))) {
                         args[0] = keys.filter { it != "key_we_chat" && it != "key_qq" }.toTypedArray()
+                    }
+                }
+            }
+        }
+    }
+
+	private fun PackageParam.applyOtaHooks() {
+        findClass("android.os.SystemProperties").hook {
+            injectMember {
+                method {
+                    name = "get"
+                    param(StringClass)
+                }
+                replaceAny {
+                    val key = args[0] as String
+                    when (key) {
+                        "ro.product.countrycode" -> "CN"
+                        "ro.odm.lenovo.region" -> "prc"
+                        "ro.config.zui.region" -> "PRC"
+                        else -> callOriginal()
+                    }
+                }
+            }
+            injectMember {
+                method {
+                    name = "get"
+                    param(StringClass, StringClass)
+                }
+                replaceAny {
+                    val key = args[0] as String
+                    when (key) {
+                        "ro.product.countrycode" -> "CN"
+                        "ro.odm.lenovo.region" -> "prc"
+                        "ro.config.zui.region" -> "PRC"
+                        else -> callOriginal()
                     }
                 }
             }
