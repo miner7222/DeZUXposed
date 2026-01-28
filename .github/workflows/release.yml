@@ -28,7 +28,7 @@ jobs:
         run: |
           TAG_VERSION=${GITHUB_REF#refs/tags/}
 
-          GRADLE_VERSION=$(grep 'versionName' app/build.gradle.kts | sed -E 's/.*versionName = "(.*)".*/\1/')
+          GRADLE_VERSION=$(./gradlew.bat -q :app:printVersionName)
           
           echo "Git Tag Version: $TAG_VERSION"
           echo "Gradle Version: $GRADLE_VERSION"
