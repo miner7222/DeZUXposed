@@ -11,6 +11,8 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      GRADLE_USER_HOME: ${{ github.workspace }}\.gradle
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -45,6 +47,16 @@ jobs:
         shell: bash
         run: |
           echo "${{ secrets.SIGNING_KEY_STORE_BASE64 }}" | base64 --decode > app/release-keystore.jks
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.GRADLE_USER_HOME }}\caches
+            ${{ env.GRADLE_USER_HOME }}\wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties', '**/libs.versions.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
       - name: Setup Gradle Cache
         uses: gradle/actions/setup-gradle@v3
