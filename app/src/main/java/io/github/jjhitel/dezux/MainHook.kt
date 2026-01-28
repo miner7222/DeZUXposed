@@ -14,7 +14,6 @@ import io.github.jjhitel.dezux.R
 class MainHook : IYukiHookXposedInit {
 
     private val isInsideHeaderCheck = ThreadLocal<Boolean>()
-    private val isInsideMainlineCheck = ThreadLocal<Boolean>()
 
     override fun onInit() = configs {
         isDebug = false
@@ -188,20 +187,24 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
+        // Hide 'Google Play system update' preference.
         findClass("com.android.settings.deviceinfo.firmwareversion.MainlineModuleVersionPreferenceController").hook {
             injectMember {
                 method {
                     name = "getAvailabilityStatus"
                     emptyParam()
                 }
-                replaceAny {
-                    isInsideMainlineCheck.set(true)
-                    try {
-                        return@replaceAny callOriginal()
-                    } finally {
-                        isInsideMainlineCheck.set(false)
-                    }
+                replaceAny { 3 }
+            }
+        }
+
+        findClass("com.lenovo.settings.deviceinfo.controller.MainlineModuleVersionPreferenceController").hook {
+            injectMember {
+                method {
+                    name = "getAvailabilityStatus"
+                    emptyParam()
                 }
+                replaceAny { 3 }
             }
         }
 
@@ -214,18 +217,6 @@ class MainHook : IYukiHookXposedInit {
                 replaceAny {
                     if (isInsideHeaderCheck.get() == true) {
                         return@replaceAny true
-                    }
-                    return@replaceAny callOriginal()
-                }
-            }
-            injectMember {
-                method {
-                    name = "isRowVersion"
-                    emptyParam()
-                }
-                replaceAny {
-                    if (isInsideMainlineCheck.get() == true) {
-                        return@replaceAny false
                     }
                     return@replaceAny callOriginal()
                 }
