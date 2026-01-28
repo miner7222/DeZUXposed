@@ -79,3 +79,8 @@ jobs:
         with:
           files: app/build/outputs/apk/release/DeZUXposed-${{ github.ref_name }}.apk
           generate_release_notes: true
+
+      - name: Cleanup keystore
+        if: ${{ always() }}
+        shell: bash
+        run: rm -f app/release-keystore.jks
