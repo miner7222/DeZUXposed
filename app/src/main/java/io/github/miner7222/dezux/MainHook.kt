@@ -1,10 +1,10 @@
-package io.github.jjhitel.dezux
+package io.github.miner7222.dezux
 
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedInterface.ExceptionMode
 import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
 import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
-import io.github.jjhitel.dezux.R
+import io.github.miner7222.dezux.R
 
 class MainHook : XposedModule() {
 

@@ -1,5 +1,5 @@
 # Keep the libxposed module entry point and its specific instantiation constructor
--keep public class io.github.jjhitel.dezux.MainHook {
+-keep public class io.github.miner7222.dezux.MainHook {
     public <init>(io.github.libxposed.api.XposedModuleInterface, io.github.libxposed.api.XposedModuleInterface$ModuleLoadedParam);
 }
 
