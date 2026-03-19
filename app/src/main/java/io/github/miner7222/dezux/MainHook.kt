@@ -206,6 +206,7 @@ class MainHook : XposedModule() {
             val method6 = clazz6.getDeclaredMethod("getAvailabilityStatus")
             hook(method6).setExceptionMode(ExceptionMode.PROTECTIVE).intercept { _ -> 0 }
         } catch (e: Exception) {}
+	}
 
     private fun applyGameServiceHooks(classLoader: ClassLoader) {
         try {
