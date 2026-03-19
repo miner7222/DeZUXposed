@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "io.github.jjhitel.dezux"
+    namespace = "io.github.miner7222.dezux"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "io.github.jjhitel.dezux"
+        applicationId = "io.github.miner7222.dezux"
         minSdk = 24
         targetSdk = 36
         versionCode = 1000

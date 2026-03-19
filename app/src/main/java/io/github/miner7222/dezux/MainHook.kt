@@ -1,4 +1,4 @@
-package io.github.jjhitel.dezux
+package io.github.miner7222.dezux
 
 import com.highcapable.yukihookapi.annotation.xposed.InjectYukiHookWithXposed
 import com.highcapable.yukihookapi.hook.factory.configs
@@ -8,7 +8,7 @@ import com.highcapable.yukihookapi.hook.param.PackageParam
 import com.highcapable.yukihookapi.hook.type.java.StringClass
 import com.highcapable.yukihookapi.hook.xposed.proxy.IYukiHookXposedInit
 import java.lang.reflect.Modifier
-import io.github.jjhitel.dezux.R
+import io.github.miner7222.dezux.R
 
 @InjectYukiHookWithXposed
 class MainHook : IYukiHookXposedInit {

@@ -1,4 +1,4 @@
--keep class io.github.jjhitel.dezux.MainHook
+-keep class io.github.miner7222.dezux.MainHook
 -repackageclasses ""
 -allowaccessmodification
 -dontwarn java.lang.reflect.AnnotatedType
