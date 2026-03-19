@@ -1,64 +1,41 @@
 package io.github.jjhitel.dezux
 
-import com.highcapable.yukihookapi.annotation.xposed.InjectYukiHookWithXposed
-import com.highcapable.yukihookapi.hook.factory.configs
-import com.highcapable.yukihookapi.hook.factory.encase
-import com.highcapable.yukihookapi.hook.factory.method
-import com.highcapable.yukihookapi.hook.param.PackageParam
-import com.highcapable.yukihookapi.hook.type.java.StringClass
-import com.highcapable.yukihookapi.hook.xposed.proxy.IYukiHookXposedInit
-import java.lang.reflect.Modifier
+import io.github.libxposed.api.XposedModule
+import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
+import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
 import io.github.jjhitel.dezux.R
 
-@InjectYukiHookWithXposed
-class MainHook : IYukiHookXposedInit {
+class MainHook : XposedModule() {
 
     private val isInsideHeaderCheck = ThreadLocal<Boolean>()
 
-    override fun onInit() = configs {
-        isDebug = false
+    override fun onSystemServerStarting(param: SystemServerStartingParam) {
+        super.onSystemServerStarting(param)
+        applyGlobalHooks(param.classLoader)
     }
 
-    override fun onHook() = encase {
-        loadSystem {
-            applyGlobalHooks()
-        }
+    override fun onPackageLoaded(param: PackageLoadedParam) {
+        super.onPackageLoaded(param)
+        
+        if (param.isFirstPackage) {
+            applyGlobalHooks(param.defaultClassLoader)
+         }
 
-        loadApp {
-            applyGlobalHooks()
+        when (param.packageName) {
+            "com.android.settings" -> applyAppSettingsHooks(param.defaultClassLoader)
+            "com.zui.game.service" -> applyGameServiceHooks(param.defaultClassLoader)
+            "com.lenovo.ota", "com.lenovo.tbengine" -> applyOtaHooks(param.defaultClassLoader)
+            "com.lenovo.levoice.caption" -> applyCaptionHooks(param.defaultClassLoader)
         }
-
-        loadApp("com.android.settings") {
-            applyAppSettingsHooks()
-        }
-
-        loadApp("com.zui.game.service") {
-            applyGameServiceHooks()
-        }
-
-		loadApp("com.lenovo.ota") {
-            applyOtaHooks()
-        }
-
-		loadApp("com.lenovo.tbengine") {
-            applyOtaHooks()
-        }
-
-        loadApp("com.lenovo.levoice.caption") {
-            findClass("com.zui.translator.utils.MicrosoftApiKey").hook {
-                injectMember {
-                    method {
-                        name = "getCountryCode"
-                        emptyParam()
-                    }
-                    replaceAny { "CN" }
-                }
-            }
-        }
-
     }
 
-    private fun PackageParam.applyGlobalHooks() {
+    private fun applyCaptionHooks(classLoader: ClassLoader) {
+        /* TODO: Translate to libxposed API in Commit 3
+        findClass("com.zui.translator.utils.MicrosoftApiKey").hook {
+        */
+    }
+
+    private fun applyGlobalHooks(classLoader: ClassLoader) {
         val enabledFeatures = setOf(
             "DynamicFeature",
             "GoogleConnectivityResOverlay",
@@ -147,188 +124,29 @@ class MainHook : IYukiHookXposedInit {
             "xiangbb"
         )
 
-        findClass("com.lgsi.config.LgsiFeatures").hook {
-            injectMember {
-                method {
-                    name = "enabled"
-                    param(StringClass)
-                }
-                replaceAny {
-                    if (args.isEmpty()) return@replaceAny callOriginal()
-                    val feature = args[0] as? String ?: return@replaceAny callOriginal()
-
-                    when (feature) {
-                        in enabledFeatures -> return@replaceAny true
-                        in disabledFeatures -> return@replaceAny false
-                        else -> return@replaceAny callOriginal()
-                    }
-                }
-            }
-        }
+        /* TODO: Translate to libxposed API in Commit 3
+        */
 
     }
 
-    private fun PackageParam.applyAppSettingsHooks() {
+    private fun applyAppSettingsHooks(classLoader: ClassLoader) {
         // Enable Multiple Space.
-        findClass("com.lenovo.settings.applications.LenovoAppHeaderPreferenceController").hook {
-            injectMember {
-                method {
-                    name = "addMultiAppEntryIfSupported"
-                    param(List::class.java)
-                }
-                replaceUnit {
-                    isInsideHeaderCheck.set(true)
-                    try {
-                        callOriginal()
-                    } finally {
-                        isInsideHeaderCheck.set(false)
-                    }
-                }
-            }
-        }
+        /* TODO: Translate to libxposed API in Commit 3
 
         // Hide 'Google Play system update' preference.
-        findClass("com.android.settings.deviceinfo.firmwareversion.MainlineModuleVersionPreferenceController").hook {
-            injectMember {
-                method {
-                    name = "getAvailabilityStatus"
-                    emptyParam()
-                }
-                replaceAny { 3 }
-            }
-        }
-
-        findClass("com.lenovo.settings.deviceinfo.controller.MainlineModuleVersionPreferenceController").hook {
-            injectMember {
-                method {
-                    name = "getAvailabilityStatus"
-                    emptyParam()
-                }
-                replaceAny { 3 }
-            }
-        }
-
-        findClass("com.lenovo.common.utils.LenovoUtils").hook {
-            injectMember {
-                method {
-                    name = "isPrcVersion"
-                    emptyParam()
-                }
-                replaceAny {
-                    if (isInsideHeaderCheck.get() == true) {
-                        return@replaceAny true
-                    }
-                    return@replaceAny callOriginal()
-                }
-            }
-        }
-
-        findClass("com.lenovo.settings.applications.appclone.AppCloneUtils").hook {
-            injectMember {
-                method {
-                    name = "supportsAppClone"
-                    emptyParam()
-                }
-                replaceAny {
-                    if (isInsideHeaderCheck.get() == true) {
-                        return@replaceAny true
-                    }
-                    return@replaceAny callOriginal()
-                }
-            }
-        }
 
         // Enable Google Services Preference.
-        findClass("com.lenovo.settings.applications.GoogleServicesPreferenceController").hook {
-            injectMember {
-                method {
-                    name = "getAvailabilityStatus"
-                    emptyParam()
-                }
-                replaceAny { 0 }
-            }
-        }
 
         // Enable Restore Preinstalled Apps Preference.
-		findClass("com.lenovo.settings.applications.preinstallrestore.RestorePreinstalledAppsPreferenceController").hook {
-            injectMember {
-                method {
-                    name = "getAvailabilityStatus"
-                    emptyParam()
-                }
-                replaceAny { 0 }
-            }
-        }
 
+    private fun applyGameServiceHooks(classLoader: ClassLoader) {
+        /* TODO: Translate to libxposed API in Commit 3
+        */
     }
 
-    private fun PackageParam.applyGameServiceHooks() {
-        findClass("com.zui.util.SystemPropertiesKt").hook {
-            injectMember {
-                method {
-                    name = "getSystemProperty"
-                    param(StringClass)
-                }
-                replaceAny {
-                    val key = args[0] as String
-                    if (key == "ro.config.lgsi.region") {
-                        // Hook to prc to maintain full Game Helper functionality.
-                        return@replaceAny "prc"
-                    }
-                    return@replaceAny callOriginal()
-                }
-            }
-        }
-        findClass("com.zui.game.service.FeatureKey\$Companion").hook {
-            injectMember {
-                method {
-                    name = "createByKeys"
-                    param(Array<String>::class.java)
-                }
-                beforeHook {
-                    val keys = args[0] as? Array<String>
-                    // Remove features considered as Chinese bloatware.
-                    if (keys != null && (keys.contains("key_we_chat") || keys.contains("key_qq"))) {
-                        args[0] = keys.filter { it != "key_we_chat" && it != "key_qq" }.toTypedArray()
-                    }
-                }
-            }
-        }
-    }
-
-	private fun PackageParam.applyOtaHooks() {
-        findClass("android.os.SystemProperties").hook {
-            injectMember {
-                method {
-                    name = "get"
-                    param(StringClass)
-                }
-                replaceAny {
-                    val key = args[0] as String
-                    when (key) {
-                        "ro.product.countrycode" -> "CN"
-                        "ro.odm.lenovo.region" -> "prc"
-                        "ro.config.zui.region" -> "PRC"
-                        else -> callOriginal()
-                    }
-                }
-            }
-            injectMember {
-                method {
-                    name = "get"
-                    param(StringClass, StringClass)
-                }
-                replaceAny {
-                    val key = args[0] as String
-                    when (key) {
-                        "ro.product.countrycode" -> "CN"
-                        "ro.odm.lenovo.region" -> "prc"
-                        "ro.config.zui.region" -> "PRC"
-                        else -> callOriginal()
-                    }
-                }
-            }
-        }
+    private fun applyOtaHooks(classLoader: ClassLoader) {
+        /* TODO: Translate to libxposed API in Commit 3
+        */
     }
 
 }
