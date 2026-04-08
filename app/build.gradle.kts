@@ -14,8 +14,8 @@ android {
         applicationId = "io.github.miner7222.dezux"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1000
-        versionName = "v1.0.0"
+        versionCode = 1010
+        versionName = "v1.0.1"
     }
 
     signingConfigs {
