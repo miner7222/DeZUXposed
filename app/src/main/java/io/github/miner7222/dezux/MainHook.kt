@@ -1,14 +1,19 @@
 package io.github.miner7222.dezux
 
+import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Bundle
+import android.util.Log
 import com.highcapable.yukihookapi.annotation.xposed.InjectYukiHookWithXposed
 import com.highcapable.yukihookapi.hook.factory.configs
 import com.highcapable.yukihookapi.hook.factory.encase
 import com.highcapable.yukihookapi.hook.factory.method
 import com.highcapable.yukihookapi.hook.param.PackageParam
+import com.highcapable.yukihookapi.hook.type.java.IntType
 import com.highcapable.yukihookapi.hook.type.java.StringClass
 import com.highcapable.yukihookapi.hook.xposed.proxy.IYukiHookXposedInit
-import java.lang.reflect.Modifier
-import io.github.miner7222.dezux.R
 
 @InjectYukiHookWithXposed
 class MainHook : IYukiHookXposedInit {
@@ -30,6 +35,10 @@ class MainHook : IYukiHookXposedInit {
 
         loadApp("com.android.settings") {
             applyAppSettingsHooks()
+        }
+
+        loadApp("com.zui.gallery") {
+            applyGalleryHooks()
         }
 
         loadApp("com.zui.game.service") {
@@ -56,6 +65,106 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
+    }
+
+    private fun PackageParam.applyGalleryHooks() {
+        hookGalleryVerificationRequestTagging()
+        hookMainActivityPrivacyResult()
+
+        findClass("android.content.ContextWrapper").hook {
+            injectMember {
+                method {
+                    name = "registerReceiver"
+                    param(BroadcastReceiver::class.java, IntentFilter::class.java, IntType)
+                }
+                beforeHook {
+                    if (args.size < 3) return@beforeHook
+
+                    val filter = args[1] as? IntentFilter ?: return@beforeHook
+                    if (!filterContainsAction(filter, ACTION_GALLERY_VERIFICATION_RESPONSE)) return@beforeHook
+
+                    val flags = args[2] as? Int ?: return@beforeHook
+                    if ((flags and RECEIVER_NOT_EXPORTED) == 0) return@beforeHook
+
+                    val newFlags = (flags and RECEIVER_NOT_EXPORTED.inv()) or RECEIVER_EXPORTED
+                    args[2] = newFlags
+                    Log.i(TAG, "Changed Gallery privacy receiver flags from $flags to $newFlags")
+                }
+            }
+        }
+    }
+
+    private fun PackageParam.hookGalleryVerificationRequestTagging() {
+        findClass("android.app.Activity").hook {
+            injectMember {
+                method {
+                    name = "startActivityForResult"
+                    param(Intent::class.java, IntType)
+                }
+                beforeHook {
+                    tagGalleryVerificationIntent(args[0] as? Intent)
+                }
+            }
+            injectMember {
+                method {
+                    name = "startActivityForResult"
+                    param(Intent::class.java, IntType, Bundle::class.java)
+                }
+                beforeHook {
+                    tagGalleryVerificationIntent(args[0] as? Intent)
+                }
+            }
+        }
+    }
+
+    private fun PackageParam.hookMainActivityPrivacyResult() {
+        val galleryUtilsClass = "com.zui.gallery.util.GalleryUtils".toClass()
+        val mainActivityClass = "com.zui.gallery.main.ui.activity.MainActivity".toClass()
+        val mediaItemClass = "com.zui.gallery.data.MediaItem".toClass()
+        val menuExecutorClass = "com.zui.gallery.main.utils.MenuExecutorUtils".toClass()
+
+        "com.zui.gallery.main.ui.activity.MainActivity".hook {
+            injectMember {
+                method {
+                    name = "onActivityResult"
+                    param(IntType, IntType, Intent::class.java)
+                }
+                afterHook {
+                    val requestCode = args[0] as? Int ?: return@afterHook
+                    val resultCode = args[1] as? Int ?: return@afterHook
+                    if (requestCode != REQUEST_CONFIRM_CREDENTIAL || resultCode != Activity.RESULT_OK) return@afterHook
+
+                    val pendingObject = galleryUtilsClass
+                        .getDeclaredMethod("takeMemCache", String::class.java)
+                        .invoke(null, KEY_FILES_TO_ADD_PRIVACY_GROUP)
+                        ?: return@afterHook
+
+                    val menuExecutor = mainActivityClass
+                        .getDeclaredMethod("getMenuExecutor")
+                        .invoke(instance)
+                        ?: return@afterHook
+
+                    when {
+                        mediaItemClass.isInstance(pendingObject) -> {
+                            menuExecutorClass
+                                .getDeclaredMethod("addItemToPrivacyFirst", mediaItemClass)
+                                .invoke(menuExecutor, pendingObject)
+                            Log.i(TAG, "MainActivity privacy add triggered for single item")
+                        }
+
+                        pendingObject is List<*> -> {
+                            menuExecutorClass
+                                .getDeclaredMethod("addItemsToPrivacyFirst", List::class.java)
+                                .invoke(menuExecutor, pendingObject)
+                            val addItemsField = mainActivityClass.getDeclaredField("addItemsToPrivacyFirst")
+                            addItemsField.isAccessible = true
+                            addItemsField.setBoolean(null, true)
+                            Log.i(TAG, "MainActivity privacy add triggered for list")
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun PackageParam.applyGlobalHooks() {
@@ -331,4 +440,51 @@ class MainHook : IYukiHookXposedInit {
         }
     }
 
+    private fun filterContainsAction(filter: IntentFilter, targetAction: String): Boolean {
+        for (index in 0 until filter.countActions()) {
+            if (filter.getAction(index) == targetAction) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun tagGalleryVerificationIntent(intent: Intent?) {
+        if (intent?.action != ACTION_PRIVACY_VERIFICATION) return
+
+        val stackTraceClassNames = Throwable().stackTrace.map { it.className }
+        val mode = when {
+            stackTraceClassNames.any { it in PRIVACY_ADD_CALLERS } -> REQUEST_MODE_ADD
+            stackTraceClassNames.any { it in PRIVACY_OPEN_CALLERS } -> REQUEST_MODE_OPEN
+            else -> return
+        }
+
+        intent.putExtra(EXTRA_REQUEST_MODE, mode)
+        Log.i(TAG, "Tagged Gallery privacy request mode=$mode")
+    }
+
+    private companion object {
+        private const val TAG = "DeZUXGalleryHook"
+        private const val ACTION_GALLERY_VERIFICATION_RESPONSE = "gallery_verification_response"
+        private const val ACTION_PRIVACY_VERIFICATION = "com.lenovo.privacyspace.verification"
+        private const val EXTRA_REQUEST_MODE = "io.github.miner7222.dezux.PRIVACY_REQUEST_MODE"
+        private const val KEY_FILES_TO_ADD_PRIVACY_GROUP = "filesToAddToPrivacyGroup"
+        private const val REQUEST_MODE_ADD = "add"
+        private const val REQUEST_MODE_OPEN = "open"
+        private const val REQUEST_CONFIRM_CREDENTIAL = 0x22B8
+        private const val RECEIVER_EXPORTED = 0x2
+        private const val RECEIVER_NOT_EXPORTED = 0x4
+        private val PRIVACY_ADD_CALLERS = setOf(
+            "com.zui.gallery.main.utils.MenuExecutorUtils",
+            "com.zui.gallery.app.AlbumPage",
+            "com.zui.gallery.app.PhotoPage",
+            "com.zui.gallery.main.ui.view.PhotoPageActionView",
+            "com.zui.gallery.app.localtime.LocalTimeAlbumPage"
+        )
+        private val PRIVACY_OPEN_CALLERS = setOf(
+            "com.zui.gallery.app.AlbumSetPage",
+            "com.zui.gallery.banner.BaseActivity",
+            "com.zui.gallery.banner.PrivacyBaseActivity"
+        )
+    }
 }

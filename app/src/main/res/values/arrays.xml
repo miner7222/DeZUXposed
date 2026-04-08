@@ -6,6 +6,7 @@
         <item>com.lenovo.levoice.caption</item>
         <item>com.lenovo.ota</item>
         <item>com.lenovo.tbengine</item>
+        <item>com.zui.gallery</item>
         <item>com.zui.game.service</item>
     </string-array>
 </resources>

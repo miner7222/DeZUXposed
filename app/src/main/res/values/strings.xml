@@ -1,4 +1,7 @@
 <resources>
     <string name="app_name" translatable="false">DeZUX</string>
     <string name="module_description">Aims to change the overall experience to ROW, keeping the advantages of PRC on ZUXOS.</string>
+    <string name="private_album_unlock_title">Private album</string>
+    <string name="grant_root_access_toast">Please grant ROOT access to DeZUXposed.</string>
+    <string name="private_album_launch_failed">Failed to open private album.</string>
 </resources>
