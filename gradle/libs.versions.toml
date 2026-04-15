@@ -2,7 +2,7 @@
 agp = "9.1.0"
 kotlin = "2.3.20"
 ksp = "2.3.6"
-annotation = "1.9.1"
+annotation = "1.10.0"
 
 xposed-api = "82"
 xposed-api-sources = "82:sources"
