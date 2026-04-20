@@ -1,6 +1,7 @@
 package io.github.miner7222.dezux
 
 import android.app.Activity
+import android.content.Context
 import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.IntentFilter
@@ -39,6 +40,10 @@ class MainHook : IYukiHookXposedInit {
 
         loadApp("com.zui.gallery") {
             applyGalleryHooks()
+        }
+
+        loadApp("com.zui.launcher") {
+            applyLauncherHooks()
         }
 
         loadApp("com.zui.game.service") {
@@ -89,6 +94,44 @@ class MainHook : IYukiHookXposedInit {
                     val newFlags = (flags and RECEIVER_NOT_EXPORTED.inv()) or RECEIVER_EXPORTED
                     args[2] = newFlags
                     Log.i(TAG, "Changed Gallery privacy receiver flags from $flags to $newFlags")
+                }
+            }
+        }
+    }
+
+    private fun PackageParam.applyLauncherHooks() {
+        findClass("com.android.quickstep.util.ContextualSearchStateManager").hook {
+            injectMember {
+                method {
+                    name = "requestUpdateProperties"
+                    emptyParam()
+                }
+                beforeHook {
+                    forceLauncherContextualSearchPackage(instance)
+                }
+            }
+
+            injectMember {
+                method {
+                    name = "isContextualSearchIntentAvailable"
+                    emptyParam()
+                }
+                replaceAny {
+                    forceLauncherContextualSearchPackage(instance)
+                    val original = callOriginal() as? Boolean ?: false
+                    if (original) return@replaceAny true
+
+                    val context = getLauncherStateManagerContext(instance) ?: return@replaceAny false
+                    val packageName = getLauncherContextualSearchPackage(instance)
+                        ?: resolveLauncherContextualSearchPackage(context)
+                    if (packageName.isBlank()) return@replaceAny false
+
+                    val available = isContextualSearchIntentAvailable(context, packageName)
+                    if (available) {
+                        setLauncherIntentAvailabilityFlag(instance, true)
+                        Log.i(CTS_TAG, "Recovered launcher contextual-search intent availability for $packageName")
+                    }
+                    return@replaceAny available
                 }
             }
         }
@@ -463,8 +506,75 @@ class MainHook : IYukiHookXposedInit {
         Log.i(TAG, "Tagged Gallery privacy request mode=$mode")
     }
 
+    private fun forceLauncherContextualSearchPackage(stateManager: Any): Boolean {
+        val context = getLauncherStateManagerContext(stateManager) ?: return false
+        val fixedPackage = resolveLauncherContextualSearchPackage(context)
+        if (fixedPackage.isBlank()) return false
+
+        val currentPackage = getLauncherContextualSearchPackage(stateManager)
+        if (currentPackage == fixedPackage) return false
+
+        val packageField = stateManager.javaClass.getDeclaredField("mContextualSearchPackage")
+        packageField.isAccessible = true
+        packageField.set(stateManager, fixedPackage)
+        Log.i(CTS_TAG, "Patched launcher contextual-search package from '$currentPackage' to '$fixedPackage'")
+        return true
+    }
+
+    private fun getLauncherStateManagerContext(stateManager: Any): Context? {
+        return runCatching {
+            val contextField = stateManager.javaClass.getDeclaredField("mContext")
+            contextField.isAccessible = true
+            contextField.get(stateManager) as? Context
+        }.getOrNull()
+    }
+
+    private fun getLauncherContextualSearchPackage(stateManager: Any): String? {
+        return runCatching {
+            val packageField = stateManager.javaClass.getDeclaredField("mContextualSearchPackage")
+            packageField.isAccessible = true
+            packageField.get(stateManager) as? String
+        }.getOrNull()
+    }
+
+    private fun setLauncherIntentAvailabilityFlag(stateManager: Any, value: Boolean) {
+        runCatching {
+            val availableField = stateManager.javaClass.getDeclaredField("c")
+            availableField.isAccessible = true
+            availableField.setBoolean(stateManager, value)
+        }
+    }
+
+    private fun resolveLauncherContextualSearchPackage(context: Context): String {
+        val internalPackage = runCatching {
+            val utilitiesClass = Class.forName("com.android.launcher3.Utilities", false, context.classLoader)
+            val method = utilitiesClass.getDeclaredMethod(
+                "getInternalString",
+                Context::class.java,
+                String::class.java
+            )
+            method.isAccessible = true
+            method.invoke(null, context, "config_defaultContextualSearchPackageName") as? String
+        }.getOrNull()
+
+        if (!internalPackage.isNullOrBlank()) return internalPackage
+        return DEFAULT_CONTEXTUAL_SEARCH_PACKAGE
+    }
+
+    private fun isContextualSearchIntentAvailable(context: Context, packageName: String): Boolean {
+        return runCatching {
+            val intent = Intent(ACTION_LAUNCH_CONTEXTUAL_SEARCH).setPackage(packageName)
+            val matches = context.packageManager.queryIntentActivities(intent, QUERY_INTENT_FLAGS)
+            matches.isNotEmpty()
+        }.getOrDefault(false)
+    }
+
     private companion object {
         private const val TAG = "DeZUXGalleryHook"
+        private const val CTS_TAG = "DeZUXCtsHook"
+        private const val ACTION_LAUNCH_CONTEXTUAL_SEARCH = "android.app.contextualsearch.action.LAUNCH_CONTEXTUAL_SEARCH"
+        private const val DEFAULT_CONTEXTUAL_SEARCH_PACKAGE = "com.google.android.googlequicksearchbox"
+        private const val QUERY_INTENT_FLAGS = 0xC0000
         private const val ACTION_GALLERY_VERIFICATION_RESPONSE = "gallery_verification_response"
         private const val ACTION_PRIVACY_VERIFICATION = "com.lenovo.privacyspace.verification"
         private const val EXTRA_REQUEST_MODE = "io.github.miner7222.dezux.PRIVACY_REQUEST_MODE"

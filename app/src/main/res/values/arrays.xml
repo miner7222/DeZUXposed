@@ -8,5 +8,6 @@
         <item>com.lenovo.tbengine</item>
         <item>com.zui.gallery</item>
         <item>com.zui.game.service</item>
+        <item>com.zui.launcher</item>
     </string-array>
 </resources>
