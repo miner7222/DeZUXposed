@@ -1,4 +1,5 @@
 .gradle
+.gradle-home
 .idea
 .kotlin
 app/debug
