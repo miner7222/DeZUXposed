@@ -784,8 +784,7 @@ class MainHook : IYukiHookXposedInit {
             "wallpaper_014",
             "wallpaper_015",
             "wallpaper_019",
-            "wallpaper_020",
-            "wallpaper_021"
+            "wallpaper_020"
         )
         private val PRIVACY_ADD_CALLERS = setOf(
             "com.zui.gallery.main.utils.MenuExecutorUtils",
