@@ -456,14 +456,14 @@ class MainHook : IYukiHookXposedInit {
     }
 
     private fun PackageParam.applyWallpaperSettingHooks() {
-        hookWallpaperSettingStaticWallpaperArrays()
+        hookWallpaperSettingResourceArrays()
         hookWallpaperSettingChargeStyles()
         hookWallpaperSettingPrcLockscreenSwitch()
         hookWallpaperSettingPrcSearchIndex()
         hookWallpaperSettingMultiUserRestrictions()
     }
 
-    private fun PackageParam.hookWallpaperSettingStaticWallpaperArrays() {
+    private fun PackageParam.hookWallpaperSettingResourceArrays() {
         findClass("android.content.res.Resources").hook {
             injectMember {
                 method {
@@ -474,9 +474,20 @@ class MainHook : IYukiHookXposedInit {
                     val result = callOriginal()
                     val resources = instance as? Resources ?: return@replaceAny result
                     val resId = args.getOrNull(0) as? Int ?: return@replaceAny result
-                    if (resources.isWallpaperSettingStaticWallpaperArray(resId)) {
-                        Log.i(WALLPAPER_TAG, "Using default static wallpapers with Pandaer extras")
-                        return@replaceAny WALLPAPER_STATIC_DEFAULT_WITH_PANDAER_EXTRAS.copyOf()
+                    val arrayName = resources.getWallpaperSettingArrayEntryName(resId) ?: return@replaceAny result
+                    when (arrayName) {
+                        in WALLPAPER_STATIC_ARRAY_NAMES -> {
+                            Log.i(WALLPAPER_TAG, "Using default static wallpapers with Pandaer extras")
+                            return@replaceAny WALLPAPER_STATIC_DEFAULT_WITH_PANDAER_EXTRAS.copyOf()
+                        }
+                        in WALLPAPER_CHARGE_STYLE_ARRAY_NAMES -> {
+                            Log.i(WALLPAPER_TAG, "Using Pandaer charge style keys for $arrayName")
+                            return@replaceAny WALLPAPER_CHARGE_STYLE_PANDAER_KEYS.copyOf()
+                        }
+                        in WALLPAPER_CHARGE_STYLE_NAME_ARRAY_NAMES -> {
+                            Log.i(WALLPAPER_TAG, "Using Pandaer charge style names for $arrayName")
+                            return@replaceAny resources.getWallpaperSettingChargeStyleNames()
+                        }
                     }
                     return@replaceAny result
                 }
@@ -601,12 +612,23 @@ class MainHook : IYukiHookXposedInit {
         }
     }
 
-    private fun Resources.isWallpaperSettingStaticWallpaperArray(resId: Int): Boolean {
+    private fun Resources.getWallpaperSettingArrayEntryName(resId: Int): String? {
         return runCatching {
-            getResourcePackageName(resId) == WALLPAPER_SETTING_PACKAGE &&
-                getResourceTypeName(resId) == "array" &&
-                getResourceEntryName(resId) in WALLPAPER_STATIC_ARRAY_NAMES
-        }.getOrDefault(false)
+            if (getResourcePackageName(resId) == WALLPAPER_SETTING_PACKAGE &&
+                getResourceTypeName(resId) == "array"
+            ) {
+                getResourceEntryName(resId)
+            } else {
+                null
+            }
+        }.getOrNull()
+    }
+
+    private fun Resources.getWallpaperSettingChargeStyleNames(): Array<String> {
+        return WALLPAPER_CHARGE_STYLE_NAME_RESOURCE_NAMES.map { resourceName ->
+            val resId = getIdentifier(resourceName, "string", WALLPAPER_SETTING_PACKAGE)
+            if (resId != 0) getString(resId) else resourceName.removePrefix("charge_style_")
+        }.toTypedArray()
     }
 
     private fun forceWallpaperSettingLockscreenPrcMode(activity: Any?) {
@@ -766,6 +788,16 @@ class MainHook : IYukiHookXposedInit {
         private const val RECEIVER_EXPORTED = 0x2
         private const val RECEIVER_NOT_EXPORTED = 0x4
         private val WALLPAPER_STATIC_ARRAY_NAMES = setOf("wallpapers", "wallpapers_pandaer")
+        private val WALLPAPER_CHARGE_STYLE_ARRAY_NAMES = setOf(
+            "chargeStyle",
+            "chargeStyle_row",
+            "chargeStyle_pandaer"
+        )
+        private val WALLPAPER_CHARGE_STYLE_NAME_ARRAY_NAMES = setOf(
+            "chargeStyleName",
+            "chargeStyleName_row",
+            "chargeStyleName_pandaer"
+        )
         private val WALLPAPER_STATIC_DEFAULT_WITH_PANDAER_EXTRAS = arrayOf(
             "wallpaper_000",
             "wallpaper_001",
@@ -785,6 +817,20 @@ class MainHook : IYukiHookXposedInit {
             "wallpaper_015",
             "wallpaper_019",
             "wallpaper_020"
+        )
+        private val WALLPAPER_CHARGE_STYLE_PANDAER_KEYS = arrayOf(
+            "charge_style_pandaer",
+            "charge_style_default",
+            "charge_style_girl",
+            "charge_style_triangle",
+            "charge_style_turbo"
+        )
+        private val WALLPAPER_CHARGE_STYLE_NAME_RESOURCE_NAMES = arrayOf(
+            "charge_style_pandaer",
+            "charge_style_default",
+            "charge_style_girl",
+            "charge_style_triangle",
+            "charge_style_turbo"
         )
         private val PRIVACY_ADD_CALLERS = setOf(
             "com.zui.gallery.main.utils.MenuExecutorUtils",
