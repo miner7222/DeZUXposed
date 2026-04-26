@@ -1,10 +1,13 @@
 package io.github.miner7222.dezux
 
 import android.app.Activity
+import android.content.ContentProvider
 import android.content.Context
 import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.res.Resources
+import android.database.MatrixCursor
 import android.os.Bundle
 import android.util.Log
 import com.highcapable.yukihookapi.annotation.xposed.InjectYukiHookWithXposed
@@ -48,6 +51,10 @@ class MainHook : IYukiHookXposedInit {
 
         loadApp("com.zui.game.service") {
             applyGameServiceHooks()
+        }
+
+        loadApp(WALLPAPER_SETTING_PACKAGE) {
+            applyWallpaperSettingHooks()
         }
 
 		loadApp("com.lenovo.ota") {
@@ -448,6 +455,117 @@ class MainHook : IYukiHookXposedInit {
         }
     }
 
+    private fun PackageParam.applyWallpaperSettingHooks() {
+        hookWallpaperSettingStaticWallpaperArrays()
+        hookWallpaperSettingChargeStyles()
+        hookWallpaperSettingPrcLockscreenSwitch()
+        hookWallpaperSettingPrcSearchIndex()
+        hookWallpaperSettingMultiUserRestrictions()
+    }
+
+    private fun PackageParam.hookWallpaperSettingStaticWallpaperArrays() {
+        findClass("android.content.res.Resources").hook {
+            injectMember {
+                method {
+                    name = "getStringArray"
+                    param(IntType)
+                }
+                replaceAny {
+                    val result = callOriginal()
+                    val resources = instance as? Resources ?: return@replaceAny result
+                    val resId = args.getOrNull(0) as? Int ?: return@replaceAny result
+                    if (resources.isWallpaperSettingStaticWallpaperArray(resId)) {
+                        Log.i(WALLPAPER_TAG, "Using default static wallpapers with Pandaer extras")
+                        return@replaceAny WALLPAPER_STATIC_DEFAULT_WITH_PANDAER_EXTRAS.copyOf()
+                    }
+                    return@replaceAny result
+                }
+            }
+        }
+    }
+
+    private fun PackageParam.hookWallpaperSettingChargeStyles() {
+        listOf(
+            "com.zui.wallpapersetting.activity.ChargeStyleActivity",
+            "com.zui.wallpapersetting.activity.ChargeStyleDetailActivity"
+        ).forEach { className ->
+            findClass(className).hook {
+                injectMember {
+                    method {
+                        name = "isPandear"
+                        emptyParam()
+                    }
+                    replaceAny {
+                        Log.i(WALLPAPER_TAG, "Forcing Pandaer charge style options in $className")
+                        true
+                    }
+                }
+            }
+        }
+    }
+
+    private fun PackageParam.hookWallpaperSettingPrcLockscreenSwitch() {
+        findClass("com.zui.wallpapersetting.activity.LockscreenPushMainActivity").hook {
+            injectMember {
+                method {
+                    name = "onCreate"
+                    param(Bundle::class.java)
+                }
+                beforeHook {
+                    forceWallpaperSettingLockscreenPrcMode(instance)
+                }
+            }
+            injectMember {
+                method {
+                    name = "onStart"
+                    emptyParam()
+                }
+                beforeHook {
+                    forceWallpaperSettingLockscreenPrcMode(instance)
+                }
+            }
+        }
+    }
+
+    private fun PackageParam.hookWallpaperSettingPrcSearchIndex() {
+        findClass("com.zui.wallpapersetting.WallpaperSearchIndexablesProvider").hook {
+            injectMember {
+                method {
+                    name = "queryXmlResources"
+                    param(Array<String>::class.java)
+                }
+                replaceAny {
+                    val provider = instance as? ContentProvider ?: return@replaceAny callOriginal()
+                    val context = provider.context ?: return@replaceAny callOriginal()
+                    Log.i(WALLPAPER_TAG, "Returning PRC wallpaper settings search index")
+                    return@replaceAny buildWallpaperSettingPrcSearchIndexCursor(context)
+                }
+            }
+        }
+    }
+
+    private fun PackageParam.hookWallpaperSettingMultiUserRestrictions() {
+        findClass("android.content.ContextWrapper").hook {
+            injectMember {
+                method {
+                    name = "getUserId"
+                    emptyParam()
+                }
+                replaceAny { 0 }
+            }
+        }
+
+        findClass("android.os.UserManager").hook {
+            injectMember {
+                method {
+                    name = "isAdminUser"
+                    emptyParam()
+                }
+                replaceAny { true }
+            }
+        }
+    }
+
 	private fun PackageParam.applyOtaHooks() {
         findClass("android.os.SystemProperties").hook {
             injectMember {
@@ -481,6 +599,65 @@ class MainHook : IYukiHookXposedInit {
                 }
             }
         }
+    }
+
+    private fun Resources.isWallpaperSettingStaticWallpaperArray(resId: Int): Boolean {
+        return runCatching {
+            getResourcePackageName(resId) == WALLPAPER_SETTING_PACKAGE &&
+                getResourceTypeName(resId) == "array" &&
+                getResourceEntryName(resId) in WALLPAPER_STATIC_ARRAY_NAMES
+        }.getOrDefault(false)
+    }
+
+    private fun forceWallpaperSettingLockscreenPrcMode(activity: Any?) {
+        val javaClass = activity?.javaClass ?: return
+        runCatching {
+            val isOverseaField = javaClass.getDeclaredField("isOversea")
+            isOverseaField.isAccessible = true
+            isOverseaField.setBoolean(null, false)
+        }.onSuccess {
+            Log.i(WALLPAPER_TAG, "Forced lockscreen full-screen switch into PRC mode")
+        }.onFailure {
+            Log.w(WALLPAPER_TAG, "Failed to force lockscreen PRC mode", it)
+        }
+    }
+
+    private fun buildWallpaperSettingPrcSearchIndexCursor(context: Context): MatrixCursor {
+        val columns = getSearchIndexableXmlColumns()
+        val cursor = MatrixCursor(columns)
+        val xmlResId = context.resources.getIdentifier("search_info", "xml", WALLPAPER_SETTING_PACKAGE)
+            .takeIf { it != 0 }
+            ?: WALLPAPER_SEARCH_INFO_XML_RES_ID
+
+        cursor.newRow()
+            .add("rank", WALLPAPER_SEARCH_IGNORED_RANK)
+            .add("xmlResId", xmlResId)
+            .add("className", null)
+            .add("iconResId", 0)
+            .add("intentAction", Intent.ACTION_MAIN)
+            .add("intentTargetPackage", WALLPAPER_SETTING_PACKAGE)
+            .add("intentTargetClass", "com.zui.wallpapersetting.activity.CustomizaActivity")
+        return cursor
+    }
+
+    private fun getSearchIndexableXmlColumns(): Array<String> {
+        return runCatching {
+            val contractClass = Class.forName("android.provider.SearchIndexablesContract")
+            val columns = contractClass.getDeclaredField("INDEXABLES_XML_RES_COLUMNS")
+            columns.isAccessible = true
+            @Suppress("UNCHECKED_CAST")
+            columns.get(null) as Array<String>
+        }.getOrDefault(
+            arrayOf(
+                "rank",
+                "xmlResId",
+                "className",
+                "iconResId",
+                "intentAction",
+                "intentTargetPackage",
+                "intentTargetClass"
+            )
+        )
     }
 
     private fun filterContainsAction(filter: IntentFilter, targetAction: String): Boolean {
@@ -572,6 +749,10 @@ class MainHook : IYukiHookXposedInit {
     private companion object {
         private const val TAG = "DeZUXGalleryHook"
         private const val CTS_TAG = "DeZUXCtsHook"
+        private const val WALLPAPER_TAG = "DeZUXWallpaperHook"
+        private const val WALLPAPER_SETTING_PACKAGE = "com.zui.wallpapersetting"
+        private const val WALLPAPER_SEARCH_IGNORED_RANK = 0x840
+        private const val WALLPAPER_SEARCH_INFO_XML_RES_ID = 0x7f140004
         private const val ACTION_LAUNCH_CONTEXTUAL_SEARCH = "android.app.contextualsearch.action.LAUNCH_CONTEXTUAL_SEARCH"
         private const val DEFAULT_CONTEXTUAL_SEARCH_PACKAGE = "com.google.android.googlequicksearchbox"
         private const val QUERY_INTENT_FLAGS = 0xC0000
@@ -584,6 +765,28 @@ class MainHook : IYukiHookXposedInit {
         private const val REQUEST_CONFIRM_CREDENTIAL = 0x22B8
         private const val RECEIVER_EXPORTED = 0x2
         private const val RECEIVER_NOT_EXPORTED = 0x4
+        private val WALLPAPER_STATIC_ARRAY_NAMES = setOf("wallpapers", "wallpapers_pandaer")
+        private val WALLPAPER_STATIC_DEFAULT_WITH_PANDAER_EXTRAS = arrayOf(
+            "wallpaper_000",
+            "wallpaper_001",
+            "wallpaper_002",
+            "wallpaper_003",
+            "wallpaper_004",
+            "wallpaper_005",
+            "wallpaper_006",
+            "wallpaper_007",
+            "wallpaper_008",
+            "wallpaper_009",
+            "wallpaper_010",
+            "wallpaper_011",
+            "wallpaper_012",
+            "wallpaper_013",
+            "wallpaper_014",
+            "wallpaper_015",
+            "wallpaper_019",
+            "wallpaper_020",
+            "wallpaper_021"
+        )
         private val PRIVACY_ADD_CALLERS = setOf(
             "com.zui.gallery.main.utils.MenuExecutorUtils",
             "com.zui.gallery.app.AlbumPage",

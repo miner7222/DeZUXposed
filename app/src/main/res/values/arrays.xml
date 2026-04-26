@@ -9,5 +9,6 @@
         <item>com.zui.gallery</item>
         <item>com.zui.game.service</item>
         <item>com.zui.launcher</item>
+        <item>com.zui.wallpapersetting</item>
     </string-array>
 </resources>
