@@ -435,6 +435,73 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
+        // Hide the "Google Play system update" dashboard tile (Mainline module
+        // update intents: android.settings.MODULE_UPDATE_SETTINGS / VERSIONS) from
+        // the 'Safety & emergency' screen.
+        // Two layers because Settings can be pre-launched at boot (FallbackHome /
+        // search indexing) and populate the dashboard tile cache before our hooks
+        // register.
+        //   * DashboardCategory.getTiles(): filter Mainline tiles out of every read
+        //     so consumers see a clean list regardless of when the cache was built.
+        //   * DashboardFragment.displayTile(Tile): synchronous gate that returns
+        //     false for Mainline tiles, ensuring they never become preferences on
+        //     the screen during refreshDashboardTiles.
+        findClass("com.android.settingslib.drawer.DashboardCategory").hook {
+            injectMember {
+                method {
+                    name = "getTiles"
+                    emptyParam()
+                }
+                afterHook {
+                    val original = result as? List<*> ?: return@afterHook
+                    var filtered: ArrayList<Any?>? = null
+                    for (tile in original) {
+                        if (tile != null && shouldHideMainlineTile(tile)) {
+                            if (filtered == null) {
+                                filtered = ArrayList(original.size)
+                                for (kept in original) {
+                                    if (kept === tile) break
+                                    filtered.add(kept)
+                                }
+                            }
+                            continue
+                        }
+                        filtered?.add(tile)
+                    }
+                    if (filtered != null) {
+                        result = filtered
+                    }
+                }
+            }
+        }
+        findClass("com.android.settings.dashboard.DashboardFragment").hook {
+            injectMember {
+                method {
+                    name = "displayTile"
+                    param("com.android.settingslib.drawer.Tile".toClass())
+                }
+                replaceAny {
+                    val tile = args[0]
+                    if (tile != null && shouldHideMainlineTile(tile)) {
+                        return@replaceAny false
+                    }
+                    return@replaceAny callOriginal()
+                }
+            }
+        }
+
+    }
+
+    private fun shouldHideMainlineTile(tile: Any): Boolean {
+        return try {
+            val getIntent = tile.javaClass.getMethod("getIntent")
+            val intent = getIntent.invoke(tile) as? Intent ?: return false
+            val action = intent.action ?: ""
+            action == "android.settings.MODULE_UPDATE_SETTINGS" ||
+                action == "android.settings.MODULE_UPDATE_VERSIONS"
+        } catch (ignored: Throwable) {
+            false
+        }
     }
 
     private fun PackageParam.applyGameServiceHooks() {
