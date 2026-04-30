@@ -419,6 +419,22 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
+        // Force-show "More security settings" entry on the 'Safety & emergency'
+        // screen. SecurityAdvancedSettingsController.getAvailabilityStatus()
+        // returns AVAILABLE (0) only when LenovoUtils.isPrcVersion() is true;
+        // on ROW builds it returns UNSUPPORTED_ON_DEVICE (3), which hides the
+        // entry from the screen even though the search index still surfaces
+        // it. Force AVAILABLE so the entry appears for everyone.
+        findClass("com.android.settings.security.SecurityAdvancedSettingsController").hook {
+            injectMember {
+                method {
+                    name = "getAvailabilityStatus"
+                    emptyParam()
+                }
+                replaceAny { 0 }
+            }
+        }
+
     }
 
     private fun PackageParam.applyGameServiceHooks() {
