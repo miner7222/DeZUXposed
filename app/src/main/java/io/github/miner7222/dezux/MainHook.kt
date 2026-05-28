@@ -435,6 +435,23 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
+        // Force-show "WLAN hotspot" (top_level_tether) entry on the Settings
+        // homepage. TopLevelTetherPreferenceController.getAvailabilityStatus()
+        // returns AVAILABLE (0) only when LenovoUtils.isSupportTether(context)
+        // is true. On wifi-only Y700 tablets isSupportTether requires either a
+        // PRC build or a couple of pad/region flags, so ROW units lose the
+        // top-level hotspot entry. Force AVAILABLE so the entry is always
+        // visible regardless of region.
+        findClass("com.lenovo.settings.homepage.controller.TopLevelTetherPreferenceController").hook {
+            injectMember {
+                method {
+                    name = "getAvailabilityStatus"
+                    emptyParam()
+                }
+                replaceAny { 0 }
+            }
+        }
+
         // Hide the "Google Play system update" dashboard tile (Mainline module
         // update intents: android.settings.MODULE_UPDATE_SETTINGS / VERSIONS) from
         // the 'Safety & emergency' screen.
