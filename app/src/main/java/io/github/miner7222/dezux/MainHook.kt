@@ -451,6 +451,28 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
+        // Force-show 'WLAN hotspot' top SwitchPreference inside the Tether settings screen.
+        findClass("com.android.settings.wifi.tether.WifiTetherPreferenceController").hook {
+            injectMember {
+                method {
+                    name = "isAvailable"
+                    emptyParam()
+                }
+                replaceAny { true }
+            }
+        }
+
+        // Force-show 'Hotspot extra settings' entry inside the Tether settings screen.
+        findClass("com.lenovo.settings.connections.WifiTetherSettingsController").hook {
+            injectMember {
+                method {
+                    name = "getAvailabilityStatus"
+                    emptyParam()
+                }
+                replaceAny { 0 }
+            }
+        }
+
         // Strip Mainline update tiles from every cached DashboardCategory read.
         findClass("com.android.settingslib.drawer.DashboardCategory").hook {
             injectMember {
