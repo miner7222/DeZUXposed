@@ -66,6 +66,7 @@ class MainHook : IYukiHookXposedInit {
         }
 
         loadApp("com.lenovo.levoice.caption") {
+            // Force CN country code so the LeVoice caption translator uses Microsoft's PRC API key.
             findClass("com.zui.translator.utils.MicrosoftApiKey").hook {
                 injectMember {
                     method {
@@ -83,6 +84,7 @@ class MainHook : IYukiHookXposedInit {
         hookGalleryVerificationRequestTagging()
         hookMainActivityPrivacyResult()
 
+        // Re-export Gallery's privacy verification receiver so our verification activity can deliver replies.
         findClass("android.content.ContextWrapper").hook {
             injectMember {
                 method {
@@ -108,6 +110,7 @@ class MainHook : IYukiHookXposedInit {
 
     private fun PackageParam.applyLauncherHooks() {
         findClass("com.android.quickstep.util.ContextualSearchStateManager").hook {
+            // Patch contextual-search package before ZuiLauncher caches an empty/PRC fallback value.
             injectMember {
                 method {
                     name = "requestUpdateProperties"
@@ -118,6 +121,7 @@ class MainHook : IYukiHookXposedInit {
                 }
             }
 
+            // Re-resolve contextual-search intent availability when ZuiLauncher reports it as unavailable.
             injectMember {
                 method {
                     name = "isContextualSearchIntentAvailable"
@@ -145,6 +149,7 @@ class MainHook : IYukiHookXposedInit {
     }
 
     private fun PackageParam.hookGalleryVerificationRequestTagging() {
+        // Tag Gallery privacy verification intents with the originating UI mode (add vs open).
         findClass("android.app.Activity").hook {
             injectMember {
                 method {
@@ -173,6 +178,7 @@ class MainHook : IYukiHookXposedInit {
         val mediaItemClass = "com.zui.gallery.data.MediaItem".toClass()
         val menuExecutorClass = "com.zui.gallery.main.utils.MenuExecutorUtils".toClass()
 
+        // Run the pending Gallery privacy add operation after the credential challenge succeeds.
         "com.zui.gallery.main.ui.activity.MainActivity".hook {
             injectMember {
                 method {
@@ -306,6 +312,7 @@ class MainHook : IYukiHookXposedInit {
             "xiangbb"
         )
 
+        // Force-enable ROW-only LGSI features and disable PRC / Lenovo-bloat features globally.
         findClass("com.lgsi.config.LgsiFeatures").hook {
             injectMember {
                 method {
@@ -328,7 +335,7 @@ class MainHook : IYukiHookXposedInit {
     }
 
     private fun PackageParam.applyAppSettingsHooks() {
-        // Enable Multiple Space.
+        // Wrap addMultiAppEntryIfSupported so PRC/AppClone gates can be spoofed only inside it.
         findClass("com.lenovo.settings.applications.LenovoAppHeaderPreferenceController").hook {
             injectMember {
                 method {
@@ -346,7 +353,7 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
-        // Hide 'Google Play system update' preference.
+        // Hide 'Google Play system update' entry on Firmware version screen (AOSP controller).
         findClass("com.android.settings.deviceinfo.firmwareversion.MainlineModuleVersionPreferenceController").hook {
             injectMember {
                 method {
@@ -357,6 +364,7 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
+        // Hide 'Google Play system update' entry on Firmware version screen (Lenovo controller).
         findClass("com.lenovo.settings.deviceinfo.controller.MainlineModuleVersionPreferenceController").hook {
             injectMember {
                 method {
@@ -367,6 +375,7 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
+        // Spoof PRC region while addMultiAppEntryIfSupported runs so the Multi Space entry appears.
         findClass("com.lenovo.common.utils.LenovoUtils").hook {
             injectMember {
                 method {
@@ -382,6 +391,7 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
+        // Force AppClone support while addMultiAppEntryIfSupported runs so the Multi Space entry appears.
         findClass("com.lenovo.settings.applications.appclone.AppCloneUtils").hook {
             injectMember {
                 method {
@@ -397,7 +407,7 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
-        // Enable Google Services Preference.
+        // Force-show 'Google services' entry in app settings.
         findClass("com.lenovo.settings.applications.GoogleServicesPreferenceController").hook {
             injectMember {
                 method {
@@ -408,8 +418,8 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
-        // Enable Restore Preinstalled Apps Preference.
-		findClass("com.lenovo.settings.applications.preinstallrestore.RestorePreinstalledAppsPreferenceController").hook {
+        // Force-show 'Restore preinstalled apps' entry in app settings.
+        findClass("com.lenovo.settings.applications.preinstallrestore.RestorePreinstalledAppsPreferenceController").hook {
             injectMember {
                 method {
                     name = "getAvailabilityStatus"
@@ -419,12 +429,7 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
-        // Force-show "More security settings" entry on the 'Safety & emergency'
-        // screen. SecurityAdvancedSettingsController.getAvailabilityStatus()
-        // returns AVAILABLE (0) only when LenovoUtils.isPrcVersion() is true;
-        // on ROW builds it returns UNSUPPORTED_ON_DEVICE (3), which hides the
-        // entry from the screen even though the search index still surfaces
-        // it. Force AVAILABLE so the entry appears for everyone.
+        // Force-show 'More security settings' entry on Safety & emergency.
         findClass("com.android.settings.security.SecurityAdvancedSettingsController").hook {
             injectMember {
                 method {
@@ -435,13 +440,7 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
-        // Force-show "WLAN hotspot" (top_level_tether) entry on the Settings
-        // homepage. TopLevelTetherPreferenceController.getAvailabilityStatus()
-        // returns AVAILABLE (0) only when LenovoUtils.isSupportTether(context)
-        // is true. On wifi-only Y700 tablets isSupportTether requires either a
-        // PRC build or a couple of pad/region flags, so ROW units lose the
-        // top-level hotspot entry. Force AVAILABLE so the entry is always
-        // visible regardless of region.
+        // Force-show 'WLAN hotspot' top-level entry on the Settings homepage.
         findClass("com.lenovo.settings.homepage.controller.TopLevelTetherPreferenceController").hook {
             injectMember {
                 method {
@@ -452,17 +451,7 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
-        // Hide the "Google Play system update" dashboard tile (Mainline module
-        // update intents: android.settings.MODULE_UPDATE_SETTINGS / VERSIONS) from
-        // the 'Safety & emergency' screen.
-        // Two layers because Settings can be pre-launched at boot (FallbackHome /
-        // search indexing) and populate the dashboard tile cache before our hooks
-        // register.
-        //   * DashboardCategory.getTiles(): filter Mainline tiles out of every read
-        //     so consumers see a clean list regardless of when the cache was built.
-        //   * DashboardFragment.displayTile(Tile): synchronous gate that returns
-        //     false for Mainline tiles, ensuring they never become preferences on
-        //     the screen during refreshDashboardTiles.
+        // Strip Mainline update tiles from every cached DashboardCategory read.
         findClass("com.android.settingslib.drawer.DashboardCategory").hook {
             injectMember {
                 method {
@@ -491,6 +480,8 @@ class MainHook : IYukiHookXposedInit {
                 }
             }
         }
+
+        // Reject Mainline update tiles during DashboardFragment.refreshDashboardTiles.
         findClass("com.android.settings.dashboard.DashboardFragment").hook {
             injectMember {
                 method {
@@ -522,6 +513,7 @@ class MainHook : IYukiHookXposedInit {
     }
 
     private fun PackageParam.applyGameServiceHooks() {
+        // Spoof region to PRC for Game Service so the full Game Helper feature set stays available.
         findClass("com.zui.util.SystemPropertiesKt").hook {
             injectMember {
                 method {
@@ -531,13 +523,13 @@ class MainHook : IYukiHookXposedInit {
                 replaceAny {
                     val key = args[0] as String
                     if (key == "ro.config.lgsi.region") {
-                        // Hook to prc to maintain full Game Helper functionality.
                         return@replaceAny "prc"
                     }
                     return@replaceAny callOriginal()
                 }
             }
         }
+        // Strip Chinese-only feature keys (WeChat, QQ) from the Game Service feature list.
         findClass("com.zui.game.service.FeatureKey\$Companion").hook {
             injectMember {
                 method {
@@ -546,7 +538,6 @@ class MainHook : IYukiHookXposedInit {
                 }
                 beforeHook {
                     val keys = args[0] as? Array<String>
-                    // Remove features considered as Chinese bloatware.
                     if (keys != null && (keys.contains("key_we_chat") || keys.contains("key_qq"))) {
                         args[0] = keys.filter { it != "key_we_chat" && it != "key_qq" }.toTypedArray()
                     }
@@ -564,6 +555,7 @@ class MainHook : IYukiHookXposedInit {
     }
 
     private fun PackageParam.hookWallpaperSettingResourceArrays() {
+        // Replace stock wallpaper / charge-style arrays with Pandaer-extended variants.
         findClass("android.content.res.Resources").hook {
             injectMember {
                 method {
@@ -596,6 +588,7 @@ class MainHook : IYukiHookXposedInit {
     }
 
     private fun PackageParam.hookWallpaperSettingChargeStyles() {
+        // Force Pandaer charge-style options to be available on ChargeStyle activities.
         listOf(
             "com.zui.wallpapersetting.activity.ChargeStyleActivity",
             "com.zui.wallpapersetting.activity.ChargeStyleDetailActivity"
@@ -616,6 +609,7 @@ class MainHook : IYukiHookXposedInit {
     }
 
     private fun PackageParam.hookWallpaperSettingPrcLockscreenSwitch() {
+        // Flip 'isOversea' to false so the PRC lockscreen full-screen switch UI is used.
         findClass("com.zui.wallpapersetting.activity.LockscreenPushMainActivity").hook {
             injectMember {
                 method {
@@ -639,6 +633,7 @@ class MainHook : IYukiHookXposedInit {
     }
 
     private fun PackageParam.hookWallpaperSettingPrcSearchIndex() {
+        // Return the PRC wallpaper-search index regardless of region.
         findClass("com.zui.wallpapersetting.WallpaperSearchIndexablesProvider").hook {
             injectMember {
                 method {
@@ -656,6 +651,7 @@ class MainHook : IYukiHookXposedInit {
     }
 
     private fun PackageParam.hookWallpaperSettingMultiUserRestrictions() {
+        // Always report user 0 so WallpaperSetting bypasses multi-user restrictions.
         findClass("android.content.ContextWrapper").hook {
             injectMember {
                 method {
@@ -666,6 +662,7 @@ class MainHook : IYukiHookXposedInit {
             }
         }
 
+        // Always report admin user so WallpaperSetting bypasses admin-gated UI.
         findClass("android.os.UserManager").hook {
             injectMember {
                 method {
@@ -678,6 +675,7 @@ class MainHook : IYukiHookXposedInit {
     }
 
 	private fun PackageParam.applyOtaHooks() {
+        // Spoof country/region system properties to CN/PRC so OTA / tbengine see a Chinese device.
         findClass("android.os.SystemProperties").hook {
             injectMember {
                 method {
