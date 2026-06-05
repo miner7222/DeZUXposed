@@ -3,6 +3,8 @@
 ## Description
 This Xposed module aims to remove PRC bloatwares on ZUXOS and overlay a ZUI (ROW-based) experience. It must be used in conjunction with [DeZUX](https://gitlab.com/jjhitel/DeZUX) magisk module.
 
+DeZUXposed is built with libxposed API 101 and requires an LSPosed/modern Xposed framework that supports API 101 modules.
+
 ## Installation and Usage
 
 ### 1. Download the APK

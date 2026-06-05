@@ -1,229 +1,216 @@
 package io.github.miner7222.dezux
 
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.ContentProvider
 import android.content.Context
-import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.Resources
 import android.database.MatrixCursor
 import android.os.Bundle
 import android.util.Log
-import com.highcapable.yukihookapi.annotation.xposed.InjectYukiHookWithXposed
-import com.highcapable.yukihookapi.hook.factory.configs
-import com.highcapable.yukihookapi.hook.factory.encase
-import com.highcapable.yukihookapi.hook.factory.method
-import com.highcapable.yukihookapi.hook.param.PackageParam
-import com.highcapable.yukihookapi.hook.type.java.IntType
-import com.highcapable.yukihookapi.hook.type.java.StringClass
-import com.highcapable.yukihookapi.hook.xposed.proxy.IYukiHookXposedInit
+import io.github.libxposed.api.XposedModule
+import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
+import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
+import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
+import java.util.concurrent.ConcurrentHashMap
 
-@InjectYukiHookWithXposed
-class MainHook : IYukiHookXposedInit {
+class MainHook : XposedModule() {
 
     private val isInsideHeaderCheck = ThreadLocal<Boolean>()
+    private val hookedPackages = ConcurrentHashMap.newKeySet<String>()
 
-    override fun onInit() = configs {
-        isDebug = false
+    override fun onModuleLoaded(param: ModuleLoadedParam) {
+        log(
+            Log.INFO,
+            TAG,
+            "onModuleLoaded process=${param.processName} systemServer=${param.isSystemServer} " +
+                "framework=$frameworkName($frameworkVersionCode) api=$apiVersion",
+        )
     }
 
-    override fun onHook() = encase {
-        loadSystem {
+    override fun onSystemServerStarting(param: SystemServerStartingParam) {
+        log(Log.INFO, TAG, "onSystemServerStarting loader=${param.classLoader}")
+        ModernHookScope(this, param.classLoader).install("System LgsiFeatures hooks") {
+            applyGlobalHooks()
+        }
+    }
+
+    override fun onPackageReady(param: PackageReadyParam) {
+        log(
+            Log.INFO,
+            TAG,
+            "onPackageReady package=${param.packageName} first=${param.isFirstPackage} loader=${param.classLoader}",
+        )
+
+        if (!hookedPackages.add(param.packageName)) {
+            log(Log.INFO, TAG, "Skipping duplicate package hooks for ${param.packageName}")
+            return
+        }
+
+        val scope = ModernHookScope(this, param.classLoader)
+        scope.install("Global LgsiFeatures hooks for ${param.packageName}") {
             applyGlobalHooks()
         }
 
-        loadApp {
-            applyGlobalHooks()
+        when (param.packageName) {
+            SETTINGS_PACKAGE -> scope.applyAppSettingsHooks()
+            GALLERY_PACKAGE -> scope.applyGalleryHooks()
+            LAUNCHER_PACKAGE -> scope.applyLauncherHooks()
+            GAME_SERVICE_PACKAGE -> scope.applyGameServiceHooks()
+            WALLPAPER_SETTING_PACKAGE -> scope.applyWallpaperSettingHooks()
+            OTA_PACKAGE, TBENGINE_PACKAGE -> scope.applyOtaHooks()
+            LEVOICE_CAPTION_PACKAGE -> scope.applyLeVoiceCaptionHooks()
         }
+    }
 
-        loadApp("com.android.settings") {
-            applyAppSettingsHooks()
-        }
-
-        loadApp("com.zui.gallery") {
-            applyGalleryHooks()
-        }
-
-        loadApp("com.zui.launcher") {
-            applyLauncherHooks()
-        }
-
-        loadApp("com.zui.game.service") {
-            applyGameServiceHooks()
-        }
-
-        loadApp(WALLPAPER_SETTING_PACKAGE) {
-            applyWallpaperSettingHooks()
-        }
-
-		loadApp("com.lenovo.ota") {
-            applyOtaHooks()
-        }
-
-		loadApp("com.lenovo.tbengine") {
-            applyOtaHooks()
-        }
-
-        loadApp("com.lenovo.levoice.caption") {
-            // Force CN country code so the LeVoice caption translator uses Microsoft's PRC API key.
-            findClass("com.zui.translator.utils.MicrosoftApiKey").hook {
-                injectMember {
-                    method {
-                        name = "getCountryCode"
-                        emptyParam()
-                    }
-                    replaceAny { "CN" }
-                }
+    private fun ModernHookScope.applyLeVoiceCaptionHooks() {
+        install("LeVoice Microsoft API country-code hook") {
+            replaceMethod("com.zui.translator.utils.MicrosoftApiKey", "getCountryCode") {
+                "CN"
             }
         }
-
     }
 
-    private fun PackageParam.applyGalleryHooks() {
+    private fun ModernHookScope.applyGalleryHooks() {
         hookGalleryVerificationRequestTagging()
         hookMainActivityPrivacyResult()
 
-        // Re-export Gallery's privacy verification receiver so our verification activity can deliver replies.
-        findClass("android.content.ContextWrapper").hook {
-            injectMember {
-                method {
-                    name = "registerReceiver"
-                    param(BroadcastReceiver::class.java, IntentFilter::class.java, IntType)
-                }
-                beforeHook {
-                    if (args.size < 3) return@beforeHook
+        install("Gallery privacy receiver export hook") {
+            beforeMethod(
+                "android.content.ContextWrapper",
+                "registerReceiver",
+                BroadcastReceiver::class.java,
+                IntentFilter::class.java,
+                Int::class.javaPrimitiveType!!,
+            ) {
+                if (args.size < 3) return@beforeMethod
 
-                    val filter = args[1] as? IntentFilter ?: return@beforeHook
-                    if (!filterContainsAction(filter, ACTION_GALLERY_VERIFICATION_RESPONSE)) return@beforeHook
+                val filter = args[1] as? IntentFilter ?: return@beforeMethod
+                if (!filterContainsAction(filter, ACTION_GALLERY_VERIFICATION_RESPONSE)) return@beforeMethod
 
-                    val flags = args[2] as? Int ?: return@beforeHook
-                    if ((flags and RECEIVER_NOT_EXPORTED) == 0) return@beforeHook
+                val flags = args[2] as? Int ?: return@beforeMethod
+                if ((flags and RECEIVER_NOT_EXPORTED) == 0) return@beforeMethod
 
-                    val newFlags = (flags and RECEIVER_NOT_EXPORTED.inv()) or RECEIVER_EXPORTED
-                    args[2] = newFlags
-                    Log.i(TAG, "Changed Gallery privacy receiver flags from $flags to $newFlags")
-                }
+                val newFlags = (flags and RECEIVER_NOT_EXPORTED.inv()) or RECEIVER_EXPORTED
+                args[2] = newFlags
+                Log.i(TAG, "Changed Gallery privacy receiver flags from $flags to $newFlags")
             }
         }
     }
 
-    private fun PackageParam.applyLauncherHooks() {
-        findClass("com.android.quickstep.util.ContextualSearchStateManager").hook {
-            // Patch contextual-search package before ZuiLauncher caches an empty/PRC fallback value.
-            injectMember {
-                method {
-                    name = "requestUpdateProperties"
-                    emptyParam()
-                }
-                beforeHook {
-                    forceLauncherContextualSearchPackage(instance)
-                }
+    private fun ModernHookScope.applyLauncherHooks() {
+        install("Launcher contextual-search property update hook") {
+            beforeMethod(
+                "com.android.quickstep.util.ContextualSearchStateManager",
+                "requestUpdateProperties",
+            ) {
+                forceLauncherContextualSearchPackage(instanceOrNull)
             }
+        }
 
-            // Re-resolve contextual-search intent availability when ZuiLauncher reports it as unavailable.
-            injectMember {
-                method {
-                    name = "isContextualSearchIntentAvailable"
-                    emptyParam()
+        install("Launcher contextual-search availability hook") {
+            replaceMethod(
+                "com.android.quickstep.util.ContextualSearchStateManager",
+                "isContextualSearchIntentAvailable",
+            ) {
+                val stateManager = instanceOrNull ?: return@replaceMethod callOriginal()
+                forceLauncherContextualSearchPackage(stateManager)
+                val original = callOriginal() as? Boolean ?: false
+                if (original) return@replaceMethod true
+
+                val context = getLauncherStateManagerContext(stateManager) ?: return@replaceMethod false
+                val packageName = getLauncherContextualSearchPackage(stateManager)
+                    ?: resolveLauncherContextualSearchPackage(context)
+                if (packageName.isBlank()) return@replaceMethod false
+
+                val available = isContextualSearchIntentAvailable(context, packageName)
+                if (available) {
+                    setLauncherIntentAvailabilityFlag(stateManager, true)
+                    Log.i(CTS_TAG, "Recovered launcher contextual-search intent availability for $packageName")
                 }
-                replaceAny {
-                    forceLauncherContextualSearchPackage(instance)
-                    val original = callOriginal() as? Boolean ?: false
-                    if (original) return@replaceAny true
+                available
+            }
+        }
+    }
 
-                    val context = getLauncherStateManagerContext(instance) ?: return@replaceAny false
-                    val packageName = getLauncherContextualSearchPackage(instance)
-                        ?: resolveLauncherContextualSearchPackage(context)
-                    if (packageName.isBlank()) return@replaceAny false
+    private fun ModernHookScope.hookGalleryVerificationRequestTagging() {
+        install("Gallery Activity.startActivityForResult privacy tag hook") {
+            beforeMethod(
+                "android.app.Activity",
+                "startActivityForResult",
+                Intent::class.java,
+                Int::class.javaPrimitiveType!!,
+            ) {
+                tagGalleryVerificationIntent(args[0] as? Intent)
+            }
+        }
 
-                    val available = isContextualSearchIntentAvailable(context, packageName)
-                    if (available) {
-                        setLauncherIntentAvailabilityFlag(instance, true)
-                        Log.i(CTS_TAG, "Recovered launcher contextual-search intent availability for $packageName")
+        install("Gallery Activity.startActivityForResult privacy tag hook with options") {
+            beforeMethod(
+                "android.app.Activity",
+                "startActivityForResult",
+                Intent::class.java,
+                Int::class.javaPrimitiveType!!,
+                Bundle::class.java,
+            ) {
+                tagGalleryVerificationIntent(args[0] as? Intent)
+            }
+        }
+    }
+
+    private fun ModernHookScope.hookMainActivityPrivacyResult() {
+        install("Gallery MainActivity privacy result hook") {
+            val galleryUtilsClass = loadClass("com.zui.gallery.util.GalleryUtils")
+            val mainActivityClass = loadClass("com.zui.gallery.main.ui.activity.MainActivity")
+            val mediaItemClass = loadClass("com.zui.gallery.data.MediaItem")
+            val menuExecutorClass = loadClass("com.zui.gallery.main.utils.MenuExecutorUtils")
+
+            afterMethod(
+                "com.zui.gallery.main.ui.activity.MainActivity",
+                "onActivityResult",
+                Int::class.javaPrimitiveType!!,
+                Int::class.javaPrimitiveType!!,
+                Intent::class.java,
+            ) {
+                val requestCode = args[0] as? Int ?: return@afterMethod
+                val resultCode = args[1] as? Int ?: return@afterMethod
+                if (requestCode != REQUEST_CONFIRM_CREDENTIAL || resultCode != Activity.RESULT_OK) return@afterMethod
+
+                val pendingObject = galleryUtilsClass
+                    .getDeclaredMethod("takeMemCache", String::class.java)
+                    .invoke(null, KEY_FILES_TO_ADD_PRIVACY_GROUP)
+                    ?: return@afterMethod
+
+                val menuExecutor = mainActivityClass
+                    .getDeclaredMethod("getMenuExecutor")
+                    .invoke(instanceOrNull)
+                    ?: return@afterMethod
+
+                when {
+                    mediaItemClass.isInstance(pendingObject) -> {
+                        menuExecutorClass
+                            .getDeclaredMethod("addItemToPrivacyFirst", mediaItemClass)
+                            .invoke(menuExecutor, pendingObject)
+                        Log.i(TAG, "MainActivity privacy add triggered for single item")
                     }
-                    return@replaceAny available
-                }
-            }
-        }
-    }
 
-    private fun PackageParam.hookGalleryVerificationRequestTagging() {
-        // Tag Gallery privacy verification intents with the originating UI mode (add vs open).
-        findClass("android.app.Activity").hook {
-            injectMember {
-                method {
-                    name = "startActivityForResult"
-                    param(Intent::class.java, IntType)
-                }
-                beforeHook {
-                    tagGalleryVerificationIntent(args[0] as? Intent)
-                }
-            }
-            injectMember {
-                method {
-                    name = "startActivityForResult"
-                    param(Intent::class.java, IntType, Bundle::class.java)
-                }
-                beforeHook {
-                    tagGalleryVerificationIntent(args[0] as? Intent)
-                }
-            }
-        }
-    }
-
-    private fun PackageParam.hookMainActivityPrivacyResult() {
-        val galleryUtilsClass = "com.zui.gallery.util.GalleryUtils".toClass()
-        val mainActivityClass = "com.zui.gallery.main.ui.activity.MainActivity".toClass()
-        val mediaItemClass = "com.zui.gallery.data.MediaItem".toClass()
-        val menuExecutorClass = "com.zui.gallery.main.utils.MenuExecutorUtils".toClass()
-
-        // Run the pending Gallery privacy add operation after the credential challenge succeeds.
-        "com.zui.gallery.main.ui.activity.MainActivity".hook {
-            injectMember {
-                method {
-                    name = "onActivityResult"
-                    param(IntType, IntType, Intent::class.java)
-                }
-                afterHook {
-                    val requestCode = args[0] as? Int ?: return@afterHook
-                    val resultCode = args[1] as? Int ?: return@afterHook
-                    if (requestCode != REQUEST_CONFIRM_CREDENTIAL || resultCode != Activity.RESULT_OK) return@afterHook
-
-                    val pendingObject = galleryUtilsClass
-                        .getDeclaredMethod("takeMemCache", String::class.java)
-                        .invoke(null, KEY_FILES_TO_ADD_PRIVACY_GROUP)
-                        ?: return@afterHook
-
-                    val menuExecutor = mainActivityClass
-                        .getDeclaredMethod("getMenuExecutor")
-                        .invoke(instance)
-                        ?: return@afterHook
-
-                    when {
-                        mediaItemClass.isInstance(pendingObject) -> {
-                            menuExecutorClass
-                                .getDeclaredMethod("addItemToPrivacyFirst", mediaItemClass)
-                                .invoke(menuExecutor, pendingObject)
-                            Log.i(TAG, "MainActivity privacy add triggered for single item")
-                        }
-
-                        pendingObject is List<*> -> {
-                            menuExecutorClass
-                                .getDeclaredMethod("addItemsToPrivacyFirst", List::class.java)
-                                .invoke(menuExecutor, pendingObject)
-                            val addItemsField = mainActivityClass.getDeclaredField("addItemsToPrivacyFirst")
-                            addItemsField.isAccessible = true
-                            addItemsField.setBoolean(null, true)
-                            Log.i(TAG, "MainActivity privacy add triggered for list")
-                        }
+                    pendingObject is List<*> -> {
+                        menuExecutorClass
+                            .getDeclaredMethod("addItemsToPrivacyFirst", List::class.java)
+                            .invoke(menuExecutor, pendingObject)
+                        val addItemsField = mainActivityClass.getDeclaredField("addItemsToPrivacyFirst")
+                        addItemsField.isAccessible = true
+                        addItemsField.setBoolean(null, true)
+                        Log.i(TAG, "MainActivity privacy add triggered for list")
                     }
                 }
             }
         }
     }
 
-    private fun PackageParam.applyGlobalHooks() {
+    private fun ModernHookScope.applyGlobalHooks() {
         val enabledFeatures = setOf(
             "DynamicFeature",
             "GoogleConnectivityResOverlay",
@@ -239,7 +226,7 @@ class MainHook : IYukiHookXposedInit {
             "ZUISetupWizardExtROW",
             "ZuiAICloudOnlyRow",
             "ZuiDefaultAppRow",
-            "ZuiHFWallpaper"
+            "ZuiHFWallpaper",
         )
 
         val disabledFeatures = setOf(
@@ -309,217 +296,162 @@ class MainHook : IYukiHookXposedInit {
             "ZuiTianJiaoMode",
             "ZuiXlog",
             "ZuxWifiService",
-            "xiangbb"
+            "xiangbb",
         )
 
-        // Force-enable ROW-only LGSI features and disable PRC / Lenovo-bloat features globally.
-        findClass("com.lgsi.config.LgsiFeatures").hook {
-            injectMember {
-                method {
-                    name = "enabled"
-                    param(StringClass)
-                }
-                replaceAny {
-                    if (args.isEmpty()) return@replaceAny callOriginal()
-                    val feature = args[0] as? String ?: return@replaceAny callOriginal()
+        install("LgsiFeatures enabled hook") {
+            replaceMethod("com.lgsi.config.LgsiFeatures", "enabled", String::class.java) {
+                if (args.isEmpty()) return@replaceMethod callOriginal()
+                val feature = args[0] as? String ?: return@replaceMethod callOriginal()
 
-                    when (feature) {
-                        in enabledFeatures -> return@replaceAny true
-                        in disabledFeatures -> return@replaceAny false
-                        else -> return@replaceAny callOriginal()
-                    }
+                when (feature) {
+                    in enabledFeatures -> true
+                    in disabledFeatures -> false
+                    else -> callOriginal()
                 }
             }
         }
-
     }
 
-    private fun PackageParam.applyAppSettingsHooks() {
-        // Wrap addMultiAppEntryIfSupported so PRC/AppClone gates can be spoofed only inside it.
-        findClass("com.lenovo.settings.applications.LenovoAppHeaderPreferenceController").hook {
-            injectMember {
-                method {
-                    name = "addMultiAppEntryIfSupported"
-                    param(List::class.java)
-                }
-                replaceUnit {
-                    isInsideHeaderCheck.set(true)
-                    try {
-                        callOriginal()
-                    } finally {
-                        isInsideHeaderCheck.set(false)
-                    }
+    private fun ModernHookScope.applyAppSettingsHooks() {
+        install("Settings addMultiAppEntryIfSupported hook") {
+            replaceMethod(
+                "com.lenovo.settings.applications.LenovoAppHeaderPreferenceController",
+                "addMultiAppEntryIfSupported",
+                List::class.java,
+            ) {
+                isInsideHeaderCheck.set(true)
+                try {
+                    callOriginal()
+                } finally {
+                    isInsideHeaderCheck.set(false)
                 }
             }
         }
 
-        // Hide 'Google Play system update' entry on Firmware version screen (AOSP controller).
-        findClass("com.android.settings.deviceinfo.firmwareversion.MainlineModuleVersionPreferenceController").hook {
-            injectMember {
-                method {
-                    name = "getAvailabilityStatus"
-                    emptyParam()
-                }
-                replaceAny { 3 }
+        install("Settings AOSP Mainline availability hook") {
+            replaceMethod(
+                "com.android.settings.deviceinfo.firmwareversion.MainlineModuleVersionPreferenceController",
+                "getAvailabilityStatus",
+            ) {
+                3
             }
         }
 
-        // Hide 'Google Play system update' entry on Firmware version screen (Lenovo controller).
-        findClass("com.lenovo.settings.deviceinfo.controller.MainlineModuleVersionPreferenceController").hook {
-            injectMember {
-                method {
-                    name = "getAvailabilityStatus"
-                    emptyParam()
-                }
-                replaceAny { 3 }
+        install("Settings Lenovo Mainline availability hook") {
+            replaceMethod(
+                "com.lenovo.settings.deviceinfo.controller.MainlineModuleVersionPreferenceController",
+                "getAvailabilityStatus",
+            ) {
+                3
             }
         }
 
-        // Spoof PRC region while addMultiAppEntryIfSupported runs so the Multi Space entry appears.
-        findClass("com.lenovo.common.utils.LenovoUtils").hook {
-            injectMember {
-                method {
-                    name = "isPrcVersion"
-                    emptyParam()
-                }
-                replaceAny {
-                    if (isInsideHeaderCheck.get() == true) {
-                        return@replaceAny true
-                    }
-                    return@replaceAny callOriginal()
+        install("Settings LenovoUtils.isPrcVersion hook") {
+            replaceMethod("com.lenovo.common.utils.LenovoUtils", "isPrcVersion") {
+                if (isInsideHeaderCheck.get() == true) {
+                    true
+                } else {
+                    callOriginal()
                 }
             }
         }
 
-        // Force AppClone support while addMultiAppEntryIfSupported runs so the Multi Space entry appears.
-        findClass("com.lenovo.settings.applications.appclone.AppCloneUtils").hook {
-            injectMember {
-                method {
-                    name = "supportsAppClone"
-                    emptyParam()
-                }
-                replaceAny {
-                    if (isInsideHeaderCheck.get() == true) {
-                        return@replaceAny true
-                    }
-                    return@replaceAny callOriginal()
+        install("Settings AppClone support hook") {
+            replaceMethod("com.lenovo.settings.applications.appclone.AppCloneUtils", "supportsAppClone") {
+                if (isInsideHeaderCheck.get() == true) {
+                    true
+                } else {
+                    callOriginal()
                 }
             }
         }
 
-        // Force-show 'Google services' entry in app settings.
-        findClass("com.lenovo.settings.applications.GoogleServicesPreferenceController").hook {
-            injectMember {
-                method {
-                    name = "getAvailabilityStatus"
-                    emptyParam()
-                }
-                replaceAny { 0 }
+        install("Settings Google services availability hook") {
+            replaceMethod(
+                "com.lenovo.settings.applications.GoogleServicesPreferenceController",
+                "getAvailabilityStatus",
+            ) {
+                0
             }
         }
 
-        // Force-show 'Restore preinstalled apps' entry in app settings.
-        findClass("com.lenovo.settings.applications.preinstallrestore.RestorePreinstalledAppsPreferenceController").hook {
-            injectMember {
-                method {
-                    name = "getAvailabilityStatus"
-                    emptyParam()
-                }
-                replaceAny { 0 }
+        install("Settings restore preinstalled apps availability hook") {
+            replaceMethod(
+                "com.lenovo.settings.applications.preinstallrestore.RestorePreinstalledAppsPreferenceController",
+                "getAvailabilityStatus",
+            ) {
+                0
             }
         }
 
-        // Force-show 'More security settings' entry on Safety & emergency.
-        findClass("com.android.settings.security.SecurityAdvancedSettingsController").hook {
-            injectMember {
-                method {
-                    name = "getAvailabilityStatus"
-                    emptyParam()
-                }
-                replaceAny { 0 }
+        install("Settings advanced security availability hook") {
+            replaceMethod("com.android.settings.security.SecurityAdvancedSettingsController", "getAvailabilityStatus") {
+                0
             }
         }
 
-        // Force-show 'WLAN hotspot' top-level entry on the Settings homepage.
-        findClass("com.lenovo.settings.homepage.controller.TopLevelTetherPreferenceController").hook {
-            injectMember {
-                method {
-                    name = "getAvailabilityStatus"
-                    emptyParam()
-                }
-                replaceAny { 0 }
+        install("Settings top-level tether availability hook") {
+            replaceMethod(
+                "com.lenovo.settings.homepage.controller.TopLevelTetherPreferenceController",
+                "getAvailabilityStatus",
+            ) {
+                0
             }
         }
 
-        // Force-show 'WLAN hotspot' top SwitchPreference inside the Tether settings screen.
-        findClass("com.android.settings.wifi.tether.WifiTetherPreferenceController").hook {
-            injectMember {
-                method {
-                    name = "isAvailable"
-                    emptyParam()
-                }
-                replaceAny { true }
+        install("Settings Wi-Fi tether availability hook") {
+            replaceMethod("com.android.settings.wifi.tether.WifiTetherPreferenceController", "isAvailable") {
+                true
             }
         }
 
-        // Force-show 'Hotspot extra settings' entry inside the Tether settings screen.
-        findClass("com.lenovo.settings.connections.WifiTetherSettingsController").hook {
-            injectMember {
-                method {
-                    name = "getAvailabilityStatus"
-                    emptyParam()
-                }
-                replaceAny { 0 }
+        install("Settings Wi-Fi tether extra availability hook") {
+            replaceMethod(
+                "com.lenovo.settings.connections.WifiTetherSettingsController",
+                "getAvailabilityStatus",
+            ) {
+                0
             }
         }
 
-        // Strip Mainline update tiles from every cached DashboardCategory read.
-        findClass("com.android.settingslib.drawer.DashboardCategory").hook {
-            injectMember {
-                method {
-                    name = "getTiles"
-                    emptyParam()
-                }
-                afterHook {
-                    val original = result as? List<*> ?: return@afterHook
-                    var filtered: ArrayList<Any?>? = null
-                    for (tile in original) {
-                        if (tile != null && shouldHideMainlineTile(tile)) {
-                            if (filtered == null) {
-                                filtered = ArrayList(original.size)
-                                for (kept in original) {
-                                    if (kept === tile) break
-                                    filtered.add(kept)
-                                }
-                            }
-                            continue
-                        }
-                        filtered?.add(tile)
-                    }
-                    if (filtered != null) {
-                        result = filtered
-                    }
-                }
-            }
-        }
-
-        // Reject Mainline update tiles during DashboardFragment.refreshDashboardTiles.
-        findClass("com.android.settings.dashboard.DashboardFragment").hook {
-            injectMember {
-                method {
-                    name = "displayTile"
-                    param("com.android.settingslib.drawer.Tile".toClass())
-                }
-                replaceAny {
-                    val tile = args[0]
+        install("Settings DashboardCategory mainline tile filter hook") {
+            afterMethod("com.android.settingslib.drawer.DashboardCategory", "getTiles") {
+                val original = result as? List<*> ?: return@afterMethod
+                var filtered: ArrayList<Any?>? = null
+                for (tile in original) {
                     if (tile != null && shouldHideMainlineTile(tile)) {
-                        return@replaceAny false
+                        if (filtered == null) {
+                            filtered = ArrayList(original.size)
+                            for (kept in original) {
+                                if (kept === tile) break
+                                filtered.add(kept)
+                            }
+                        }
+                        continue
                     }
-                    return@replaceAny callOriginal()
+                    filtered?.add(tile)
+                }
+                if (filtered != null) {
+                    result = filtered
                 }
             }
         }
 
+        install("Settings DashboardFragment mainline tile filter hook") {
+            replaceMethod(
+                "com.android.settings.dashboard.DashboardFragment",
+                "displayTile",
+                loadClass("com.android.settingslib.drawer.Tile"),
+            ) {
+                val tile = args[0]
+                if (tile != null && shouldHideMainlineTile(tile)) {
+                    false
+                } else {
+                    callOriginal()
+                }
+            }
+        }
     }
 
     private fun shouldHideMainlineTile(tile: Any): Boolean {
@@ -534,41 +466,35 @@ class MainHook : IYukiHookXposedInit {
         }
     }
 
-    private fun PackageParam.applyGameServiceHooks() {
-        // Spoof region to PRC for Game Service so the full Game Helper feature set stays available.
-        findClass("com.zui.util.SystemPropertiesKt").hook {
-            injectMember {
-                method {
-                    name = "getSystemProperty"
-                    param(StringClass)
-                }
-                replaceAny {
-                    val key = args[0] as String
-                    if (key == "ro.config.lgsi.region") {
-                        return@replaceAny "prc"
-                    }
-                    return@replaceAny callOriginal()
+    private fun ModernHookScope.applyGameServiceHooks() {
+        install("Game Service region property hook") {
+            replaceMethod("com.zui.util.SystemPropertiesKt", "getSystemProperty", String::class.java) {
+                val key = args[0] as String
+                if (key == "ro.config.lgsi.region") {
+                    "prc"
+                } else {
+                    callOriginal()
                 }
             }
         }
-        // Strip Chinese-only feature keys (WeChat, QQ) from the Game Service feature list.
-        findClass("com.zui.game.service.FeatureKey\$Companion").hook {
-            injectMember {
-                method {
-                    name = "createByKeys"
-                    param(Array<String>::class.java)
-                }
-                beforeHook {
-                    val keys = args[0] as? Array<String>
-                    if (keys != null && (keys.contains("key_we_chat") || keys.contains("key_qq"))) {
-                        args[0] = keys.filter { it != "key_we_chat" && it != "key_qq" }.toTypedArray()
-                    }
+
+        install("Game Service feature-key filter hook") {
+            beforeMethod(
+                "com.zui.game.service.FeatureKey\$Companion",
+                "createByKeys",
+                Array<String>::class.java,
+            ) {
+                val keys = args[0] as? Array<*>
+                if (keys != null && (keys.contains("key_we_chat") || keys.contains("key_qq"))) {
+                    args[0] = keys.filterIsInstance<String>()
+                        .filter { it != "key_we_chat" && it != "key_qq" }
+                        .toTypedArray()
                 }
             }
         }
     }
 
-    private fun PackageParam.applyWallpaperSettingHooks() {
+    private fun ModernHookScope.applyWallpaperSettingHooks() {
         hookWallpaperSettingResourceArrays()
         hookWallpaperSettingChargeStyles()
         hookWallpaperSettingPrcLockscreenSwitch()
@@ -576,157 +502,114 @@ class MainHook : IYukiHookXposedInit {
         hookWallpaperSettingMultiUserRestrictions()
     }
 
-    private fun PackageParam.hookWallpaperSettingResourceArrays() {
-        // Replace stock wallpaper / charge-style arrays with Pandaer-extended variants.
-        findClass("android.content.res.Resources").hook {
-            injectMember {
-                method {
-                    name = "getStringArray"
-                    param(IntType)
-                }
-                replaceAny {
-                    val result = callOriginal()
-                    val resources = instance as? Resources ?: return@replaceAny result
-                    val resId = args.getOrNull(0) as? Int ?: return@replaceAny result
-                    val arrayName = resources.getWallpaperSettingArrayEntryName(resId) ?: return@replaceAny result
-                    when (arrayName) {
-                        in WALLPAPER_STATIC_ARRAY_NAMES -> {
-                            Log.i(WALLPAPER_TAG, "Using default static wallpapers with Pandaer extras")
-                            return@replaceAny WALLPAPER_STATIC_DEFAULT_WITH_PANDAER_EXTRAS.copyOf()
-                        }
-                        in WALLPAPER_CHARGE_STYLE_ARRAY_NAMES -> {
-                            Log.i(WALLPAPER_TAG, "Using Pandaer charge style keys for $arrayName")
-                            return@replaceAny WALLPAPER_CHARGE_STYLE_PANDAER_KEYS.copyOf()
-                        }
-                        in WALLPAPER_CHARGE_STYLE_NAME_ARRAY_NAMES -> {
-                            Log.i(WALLPAPER_TAG, "Using Pandaer charge style names for $arrayName")
-                            return@replaceAny resources.getWallpaperSettingChargeStyleNames()
-                        }
+    private fun ModernHookScope.hookWallpaperSettingResourceArrays() {
+        install("WallpaperSetting resource array hook") {
+            replaceMethod("android.content.res.Resources", "getStringArray", Int::class.javaPrimitiveType!!) {
+                val original = callOriginal()
+                val resources = instanceOrNull as? Resources ?: return@replaceMethod original
+                val resId = args.getOrNull(0) as? Int ?: return@replaceMethod original
+                val arrayName = resources.getWallpaperSettingArrayEntryName(resId) ?: return@replaceMethod original
+                when (arrayName) {
+                    in WALLPAPER_STATIC_ARRAY_NAMES -> {
+                        Log.i(WALLPAPER_TAG, "Using default static wallpapers with Pandaer extras")
+                        WALLPAPER_STATIC_DEFAULT_WITH_PANDAER_EXTRAS.copyOf()
                     }
-                    return@replaceAny result
+                    in WALLPAPER_CHARGE_STYLE_ARRAY_NAMES -> {
+                        Log.i(WALLPAPER_TAG, "Using Pandaer charge style keys for $arrayName")
+                        WALLPAPER_CHARGE_STYLE_PANDAER_KEYS.copyOf()
+                    }
+                    in WALLPAPER_CHARGE_STYLE_NAME_ARRAY_NAMES -> {
+                        Log.i(WALLPAPER_TAG, "Using Pandaer charge style names for $arrayName")
+                        resources.getWallpaperSettingChargeStyleNames()
+                    }
+                    else -> original
                 }
             }
         }
     }
 
-    private fun PackageParam.hookWallpaperSettingChargeStyles() {
-        // Force Pandaer charge-style options to be available on ChargeStyle activities.
+    private fun ModernHookScope.hookWallpaperSettingChargeStyles() {
         listOf(
             "com.zui.wallpapersetting.activity.ChargeStyleActivity",
-            "com.zui.wallpapersetting.activity.ChargeStyleDetailActivity"
+            "com.zui.wallpapersetting.activity.ChargeStyleDetailActivity",
         ).forEach { className ->
-            findClass(className).hook {
-                injectMember {
-                    method {
-                        name = "isPandear"
-                        emptyParam()
-                    }
-                    replaceAny {
-                        Log.i(WALLPAPER_TAG, "Forcing Pandaer charge style options in $className")
-                        true
-                    }
+            install("WallpaperSetting Pandaer charge-style hook for $className") {
+                replaceMethod(className, "isPandear") {
+                    Log.i(WALLPAPER_TAG, "Forcing Pandaer charge style options in $className")
+                    true
                 }
             }
         }
     }
 
-    private fun PackageParam.hookWallpaperSettingPrcLockscreenSwitch() {
-        // Flip 'isOversea' to false so the PRC lockscreen full-screen switch UI is used.
-        findClass("com.zui.wallpapersetting.activity.LockscreenPushMainActivity").hook {
-            injectMember {
-                method {
-                    name = "onCreate"
-                    param(Bundle::class.java)
-                }
-                beforeHook {
-                    forceWallpaperSettingLockscreenPrcMode(instance)
-                }
+    private fun ModernHookScope.hookWallpaperSettingPrcLockscreenSwitch() {
+        install("WallpaperSetting lockscreen onCreate PRC-mode hook") {
+            beforeMethod(
+                "com.zui.wallpapersetting.activity.LockscreenPushMainActivity",
+                "onCreate",
+                Bundle::class.java,
+            ) {
+                forceWallpaperSettingLockscreenPrcMode(instanceOrNull)
             }
-            injectMember {
-                method {
-                    name = "onStart"
-                    emptyParam()
-                }
-                beforeHook {
-                    forceWallpaperSettingLockscreenPrcMode(instance)
-                }
+        }
+
+        install("WallpaperSetting lockscreen onStart PRC-mode hook") {
+            beforeMethod("com.zui.wallpapersetting.activity.LockscreenPushMainActivity", "onStart") {
+                forceWallpaperSettingLockscreenPrcMode(instanceOrNull)
             }
         }
     }
 
-    private fun PackageParam.hookWallpaperSettingPrcSearchIndex() {
-        // Return the PRC wallpaper-search index regardless of region.
-        findClass("com.zui.wallpapersetting.WallpaperSearchIndexablesProvider").hook {
-            injectMember {
-                method {
-                    name = "queryXmlResources"
-                    param(Array<String>::class.java)
-                }
-                replaceAny {
-                    val provider = instance as? ContentProvider ?: return@replaceAny callOriginal()
-                    val context = provider.context ?: return@replaceAny callOriginal()
-                    Log.i(WALLPAPER_TAG, "Returning PRC wallpaper settings search index")
-                    return@replaceAny buildWallpaperSettingPrcSearchIndexCursor(context)
-                }
+    private fun ModernHookScope.hookWallpaperSettingPrcSearchIndex() {
+        install("WallpaperSetting PRC search-index hook") {
+            replaceMethod(
+                "com.zui.wallpapersetting.WallpaperSearchIndexablesProvider",
+                "queryXmlResources",
+                Array<String>::class.java,
+            ) {
+                val provider = instanceOrNull as? ContentProvider ?: return@replaceMethod callOriginal()
+                val context = provider.context ?: return@replaceMethod callOriginal()
+                Log.i(WALLPAPER_TAG, "Returning PRC wallpaper settings search index")
+                buildWallpaperSettingPrcSearchIndexCursor(context)
             }
         }
     }
 
-    private fun PackageParam.hookWallpaperSettingMultiUserRestrictions() {
-        // Always report user 0 so WallpaperSetting bypasses multi-user restrictions.
-        findClass("android.content.ContextWrapper").hook {
-            injectMember {
-                method {
-                    name = "getUserId"
-                    emptyParam()
-                }
-                replaceAny { 0 }
+    private fun ModernHookScope.hookWallpaperSettingMultiUserRestrictions() {
+        install("WallpaperSetting getUserId hook") {
+            replaceMethod("android.content.ContextWrapper", "getUserId") {
+                0
             }
         }
 
-        // Always report admin user so WallpaperSetting bypasses admin-gated UI.
-        findClass("android.os.UserManager").hook {
-            injectMember {
-                method {
-                    name = "isAdminUser"
-                    emptyParam()
-                }
-                replaceAny { true }
+        install("WallpaperSetting isAdminUser hook") {
+            replaceMethod("android.os.UserManager", "isAdminUser") {
+                true
             }
         }
     }
 
-	private fun PackageParam.applyOtaHooks() {
-        // Spoof country/region system properties to CN/PRC so OTA / tbengine see a Chinese device.
-        findClass("android.os.SystemProperties").hook {
-            injectMember {
-                method {
-                    name = "get"
-                    param(StringClass)
-                }
-                replaceAny {
-                    val key = args[0] as String
-                    when (key) {
-                        "ro.product.countrycode" -> "CN"
-                        "ro.odm.lenovo.region" -> "prc"
-                        "ro.config.zui.region" -> "PRC"
-                        else -> callOriginal()
-                    }
+    private fun ModernHookScope.applyOtaHooks() {
+        install("OTA SystemProperties.get(key) hook") {
+            replaceMethod("android.os.SystemProperties", "get", String::class.java) {
+                val key = args[0] as String
+                when (key) {
+                    "ro.product.countrycode" -> "CN"
+                    "ro.odm.lenovo.region" -> "prc"
+                    "ro.config.zui.region" -> "PRC"
+                    else -> callOriginal()
                 }
             }
-            injectMember {
-                method {
-                    name = "get"
-                    param(StringClass, StringClass)
-                }
-                replaceAny {
-                    val key = args[0] as String
-                    when (key) {
-                        "ro.product.countrycode" -> "CN"
-                        "ro.odm.lenovo.region" -> "prc"
-                        "ro.config.zui.region" -> "PRC"
-                        else -> callOriginal()
-                    }
+        }
+
+        install("OTA SystemProperties.get(key, default) hook") {
+            replaceMethod("android.os.SystemProperties", "get", String::class.java, String::class.java) {
+                val key = args[0] as String
+                when (key) {
+                    "ro.product.countrycode" -> "CN"
+                    "ro.odm.lenovo.region" -> "prc"
+                    "ro.config.zui.region" -> "PRC"
+                    else -> callOriginal()
                 }
             }
         }
@@ -797,8 +680,8 @@ class MainHook : IYukiHookXposedInit {
                 "iconResId",
                 "intentAction",
                 "intentTargetPackage",
-                "intentTargetClass"
-            )
+                "intentTargetClass",
+            ),
         )
     }
 
@@ -825,7 +708,8 @@ class MainHook : IYukiHookXposedInit {
         Log.i(TAG, "Tagged Gallery privacy request mode=$mode")
     }
 
-    private fun forceLauncherContextualSearchPackage(stateManager: Any): Boolean {
+    private fun forceLauncherContextualSearchPackage(stateManager: Any?): Boolean {
+        if (stateManager == null) return false
         val context = getLauncherStateManagerContext(stateManager) ?: return false
         val fixedPackage = resolveLauncherContextualSearchPackage(context)
         if (fixedPackage.isBlank()) return false
@@ -870,7 +754,7 @@ class MainHook : IYukiHookXposedInit {
             val method = utilitiesClass.getDeclaredMethod(
                 "getInternalString",
                 Context::class.java,
-                String::class.java
+                String::class.java,
             )
             method.isAccessible = true
             method.invoke(null, context, "config_defaultContextualSearchPackageName") as? String
@@ -889,10 +773,17 @@ class MainHook : IYukiHookXposedInit {
     }
 
     private companion object {
-        private const val TAG = "DeZUXGalleryHook"
+        private const val TAG = "DeZUXHook"
         private const val CTS_TAG = "DeZUXCtsHook"
         private const val WALLPAPER_TAG = "DeZUXWallpaperHook"
+        private const val SETTINGS_PACKAGE = "com.android.settings"
+        private const val GALLERY_PACKAGE = "com.zui.gallery"
+        private const val LAUNCHER_PACKAGE = "com.zui.launcher"
+        private const val GAME_SERVICE_PACKAGE = "com.zui.game.service"
         private const val WALLPAPER_SETTING_PACKAGE = "com.zui.wallpapersetting"
+        private const val OTA_PACKAGE = "com.lenovo.ota"
+        private const val TBENGINE_PACKAGE = "com.lenovo.tbengine"
+        private const val LEVOICE_CAPTION_PACKAGE = "com.lenovo.levoice.caption"
         private const val WALLPAPER_SEARCH_IGNORED_RANK = 0x840
         private const val WALLPAPER_SEARCH_INFO_XML_RES_ID = 0x7f140004
         private const val ACTION_LAUNCH_CONTEXTUAL_SEARCH = "android.app.contextualsearch.action.LAUNCH_CONTEXTUAL_SEARCH"
@@ -911,12 +802,12 @@ class MainHook : IYukiHookXposedInit {
         private val WALLPAPER_CHARGE_STYLE_ARRAY_NAMES = setOf(
             "chargeStyle",
             "chargeStyle_row",
-            "chargeStyle_pandaer"
+            "chargeStyle_pandaer",
         )
         private val WALLPAPER_CHARGE_STYLE_NAME_ARRAY_NAMES = setOf(
             "chargeStyleName",
             "chargeStyleName_row",
-            "chargeStyleName_pandaer"
+            "chargeStyleName_pandaer",
         )
         private val WALLPAPER_STATIC_DEFAULT_WITH_PANDAER_EXTRAS = arrayOf(
             "wallpaper_000",
@@ -936,33 +827,33 @@ class MainHook : IYukiHookXposedInit {
             "wallpaper_014",
             "wallpaper_015",
             "wallpaper_019",
-            "wallpaper_020"
+            "wallpaper_020",
         )
         private val WALLPAPER_CHARGE_STYLE_PANDAER_KEYS = arrayOf(
             "charge_style_pandaer",
             "charge_style_default",
             "charge_style_girl",
             "charge_style_triangle",
-            "charge_style_turbo"
+            "charge_style_turbo",
         )
         private val WALLPAPER_CHARGE_STYLE_NAME_RESOURCE_NAMES = arrayOf(
             "charge_style_pandaer",
             "charge_style_default",
             "charge_style_girl",
             "charge_style_triangle",
-            "charge_style_turbo"
+            "charge_style_turbo",
         )
         private val PRIVACY_ADD_CALLERS = setOf(
             "com.zui.gallery.main.utils.MenuExecutorUtils",
             "com.zui.gallery.app.AlbumPage",
             "com.zui.gallery.app.PhotoPage",
             "com.zui.gallery.main.ui.view.PhotoPageActionView",
-            "com.zui.gallery.app.localtime.LocalTimeAlbumPage"
+            "com.zui.gallery.app.localtime.LocalTimeAlbumPage",
         )
         private val PRIVACY_OPEN_CALLERS = setOf(
             "com.zui.gallery.app.AlbumSetPage",
             "com.zui.gallery.banner.BaseActivity",
-            "com.zui.gallery.banner.PrivacyBaseActivity"
+            "com.zui.gallery.banner.PrivacyBaseActivity",
         )
     }
 }

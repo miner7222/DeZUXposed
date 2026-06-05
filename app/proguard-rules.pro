@@ -1,4 +1,5 @@
--keep class io.github.miner7222.dezux.MainHook
+-keep class io.github.miner7222.dezux.MainHook { *; }
+-adaptresourcefilecontents META-INF/xposed/java_init.list
 -repackageclasses ""
 -allowaccessmodification
 -dontwarn java.lang.reflect.AnnotatedType
