@@ -3,6 +3,7 @@ package io.github.miner7222.dezux
 import io.github.libxposed.api.XposedInterface
 import java.lang.reflect.Executable
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ModernHookCompatTest {
@@ -70,6 +71,64 @@ class ModernHookCompatTest {
         assertEquals(listOf(listOf("manual")), chain.proceededArgs)
     }
 
+    @Test
+    fun resolverMatchesExactMethodOverload() {
+        val executable = HookExecutableResolver.resolveMethod(
+            classLoader = javaClass.classLoader!!,
+            className = ResolverTarget::class.java.name,
+            methodName = "overloaded",
+            parameterTypes = arrayOf(String::class.java),
+        )
+
+        assertEquals(listOf(String::class.java), executable.parameterTypes.toList())
+    }
+
+    @Test
+    fun resolverMatchesExactConstructorOverload() {
+        val executable = HookExecutableResolver.resolveConstructor(
+            classLoader = javaClass.classLoader!!,
+            className = ResolverTarget::class.java.name,
+            parameterTypes = arrayOf(Int::class.javaPrimitiveType!!),
+        )
+
+        assertEquals(listOf(Int::class.javaPrimitiveType!!), executable.parameterTypes.toList())
+    }
+
+    @Test
+    fun resolverReportsReadableMissingMethodSignature() {
+        val exception = runCatching {
+            HookExecutableResolver.resolveMethod(
+                classLoader = javaClass.classLoader!!,
+                className = ResolverTarget::class.java.name,
+                methodName = "overloaded",
+                parameterTypes = arrayOf(Boolean::class.javaPrimitiveType!!),
+            )
+        }.exceptionOrNull()
+
+        assertTrue(exception is NoSuchMethodException)
+        assertEquals(
+            "${ResolverTarget::class.java.name}#overloaded(boolean)",
+            exception?.message,
+        )
+    }
+
+    @Test
+    fun resolverReportsReadableMissingConstructorSignature() {
+        val exception = runCatching {
+            HookExecutableResolver.resolveConstructor(
+                classLoader = javaClass.classLoader!!,
+                className = ResolverTarget::class.java.name,
+                parameterTypes = arrayOf(Boolean::class.javaPrimitiveType!!),
+            )
+        }.exceptionOrNull()
+
+        assertTrue(exception is NoSuchMethodException)
+        assertEquals(
+            "${ResolverTarget::class.java.name}#<init>(boolean)",
+            exception?.message,
+        )
+    }
+
     private class FakeChain(
         initialArgs: List<Any?>,
         private val original: (List<Any?>) -> Any?,
@@ -106,5 +165,14 @@ class ModernHookCompatTest {
         @Suppress("unused")
         @JvmStatic
         private fun targetMethod(value: String): String = value
+    }
+
+    @Suppress("unused")
+    private class ResolverTarget {
+        constructor(value: String)
+        constructor(value: Int)
+
+        fun overloaded(value: String): String = value
+        fun overloaded(value: Int): Int = value
     }
 }

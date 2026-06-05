@@ -49,6 +49,36 @@ internal class ModernHookScope(
         }
     }
 
+    fun beforeConstructor(
+        className: String,
+        vararg parameterTypes: Class<*>,
+        block: HookCall.() -> Unit,
+    ) {
+        hookConstructor(className, parameterTypes) { chain ->
+            HookChainRunner.runBefore(chain, block)
+        }
+    }
+
+    fun afterConstructor(
+        className: String,
+        vararg parameterTypes: Class<*>,
+        block: HookCall.() -> Unit,
+    ) {
+        hookConstructor(className, parameterTypes) { chain ->
+            HookChainRunner.runAfter(chain, block)
+        }
+    }
+
+    fun replaceConstructor(
+        className: String,
+        vararg parameterTypes: Class<*>,
+        block: HookCall.() -> Any?,
+    ) {
+        hookConstructor(className, parameterTypes) { chain ->
+            HookChainRunner.runReplace(chain, block)
+        }
+    }
+
     fun loadClass(className: String): Class<*> {
         return Class.forName(className, false, classLoader)
     }
@@ -59,31 +89,80 @@ internal class ModernHookScope(
         parameterTypes: Array<out Class<*>>,
         block: (XposedInterface.Chain) -> Any?,
     ) {
-        val executable = resolveExecutable(className, methodName, parameterTypes)
+        val executable = HookExecutableResolver.resolveMethod(
+            classLoader = classLoader,
+            className = className,
+            methodName = methodName,
+            parameterTypes = parameterTypes,
+        )
+        hookExecutable(executable, block)
+    }
+
+    private fun hookConstructor(
+        className: String,
+        parameterTypes: Array<out Class<*>>,
+        block: (XposedInterface.Chain) -> Any?,
+    ) {
+        val executable = HookExecutableResolver.resolveConstructor(
+            classLoader = classLoader,
+            className = className,
+            parameterTypes = parameterTypes,
+        )
+        hookExecutable(executable, block)
+    }
+
+    private fun hookExecutable(
+        executable: Executable,
+        block: (XposedInterface.Chain) -> Any?,
+    ) {
         module.hook(executable)
             .setExceptionMode(ExceptionMode.PROTECTIVE)
             .intercept(block)
     }
 
-    private fun resolveExecutable(
+    private companion object {
+        private const val TAG = "DeZUXHook"
+    }
+}
+
+internal object HookExecutableResolver {
+    fun resolveMethod(
+        classLoader: ClassLoader,
         className: String,
         methodName: String,
         parameterTypes: Array<out Class<*>>,
     ): Executable {
-        val targetClass = loadClass(className)
-        val executable = targetClass.declaredMethods.firstOrNull {
-            it.name == methodName && it.parameterTypes.contentEquals(parameterTypes)
-        } ?: throw NoSuchMethodException("${targetClass.name}#$methodName${describeParameters(parameterTypes)}")
+        val targetClass = Class.forName(className, false, classLoader)
+        val executable = runCatching {
+            targetClass.getDeclaredMethod(methodName, *parameterTypes)
+        }.getOrElse {
+            throw missingExecutable("${targetClass.name}#$methodName${describeParameters(parameterTypes)}", it)
+        }
         executable.isAccessible = true
         return executable
     }
 
-    private fun describeParameters(parameterTypes: Array<out Class<*>>): String {
-        return parameterTypes.joinToString(prefix = "(", postfix = ")") { it.name }
+    fun resolveConstructor(
+        classLoader: ClassLoader,
+        className: String,
+        parameterTypes: Array<out Class<*>>,
+    ): Executable {
+        val targetClass = Class.forName(className, false, classLoader)
+        val executable = runCatching {
+            targetClass.getDeclaredConstructor(*parameterTypes)
+        }.getOrElse {
+            throw missingExecutable("${targetClass.name}#<init>${describeParameters(parameterTypes)}", it)
+        }
+        executable.isAccessible = true
+        return executable
     }
 
-    private companion object {
-        private const val TAG = "DeZUXHook"
+    private fun missingExecutable(message: String, cause: Throwable): NoSuchMethodException {
+        return NoSuchMethodException(message).apply { initCause(cause) }
+    }
+
+    private fun describeParameters(parameterTypes: Array<out Class<*>>): String {
+        return parameterTypes.joinToString(prefix = "(", postfix = ")") { it.name }
     }
 }
 
