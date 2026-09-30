@@ -1,6 +1,6 @@
 [versions]
 agp = "9.2.1"
-annotation = "1.10.0"
+annotation = "1.11.0"
 junit = "4.13.2"
 
 libxposedApi = "102.0.0"
